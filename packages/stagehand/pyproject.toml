@@ -2,6 +2,8 @@
 name = "stagehand"
 version = "0.1.0"
 description = "Primitives + patterns for orchestrating and monitoring experiment sweeps: a file-backed progress monitor, a live HTML dashboard, and a staged async pipeline with gates."
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 # The core (monitor + dashboard + pipeline) is pure stdlib — no runtime deps. Keeping
 # it dependency-free is deliberate: it drops into any experiment repo without dragging
