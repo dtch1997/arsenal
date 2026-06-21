@@ -1,5 +1,7 @@
 # stagehand
 
+**[arcadiaimpact.github.io/stagehand](https://arcadiaimpact.github.io/stagehand/)** · a one-page tour.
+
 Primitives + patterns for **orchestrating and monitoring experiment sweeps**. Extracted
 from a real research driver (a train → gate → eval → gate → manifest sweep) and
 de-coupled from any one experiment.

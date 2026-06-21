@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>stagehand — orchestrate &amp; monitor experiment sweeps</title>
+<meta name="description" content="A tiny Python library: a file-backed progress monitor, a live HTML dashboard, and a staged async pipeline with gates — the primitives for running experiment sweeps.">
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fdfdfc; --fg: #1f2328; --muted: #656d76; --line: #e3e6ea;
+    --card: #fff; --accent: #1a73e8; --running: #1a73e8; --done: #188038;
+    --failed: #d93025; --codebg: #f6f8fa; --codefg: #24292f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --line: #21262d;
+      --card: #161b22; --accent: #4493f8; --running: #4493f8; --done: #3fb950;
+      --failed: #f85149; --codebg: #161b22; --codefg: #e6edf3;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 0 1.3rem; }
+  code, pre, .mono { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
+
+  header { padding: 4.5rem 0 2.5rem; border-bottom: 1px solid var(--line); }
+  .brand { font-size: 2.7rem; font-weight: 700; letter-spacing: -0.02em; margin: 0; }
+  .brand::before { content: "▸ "; color: var(--accent); }
+  .tagline { font-size: 1.25rem; color: var(--muted); margin: 0.6rem 0 0; }
+  .lede { margin: 1.6rem 0 2rem; font-size: 1.05rem; }
+  .lede b { font-weight: 600; }
+
+  .btns { display: flex; gap: 0.7rem; flex-wrap: wrap; }
+  .btn {
+    display: inline-block; padding: 0.55rem 1.1rem; border-radius: 8px;
+    text-decoration: none; font-weight: 600; font-size: 0.95rem;
+    border: 1px solid var(--line);
+  }
+  .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .btn.ghost { color: var(--fg); background: var(--card); }
+
+  section { padding: 2.6rem 0; border-bottom: 1px solid var(--line); }
+  h2 { font-size: 1.4rem; margin: 0 0 1rem; letter-spacing: -0.01em; }
+  p { margin: 0 0 1rem; }
+  .muted { color: var(--muted); }
+
+  pre {
+    background: var(--codebg); color: var(--codefg); padding: 1.1rem 1.2rem;
+    border-radius: 10px; overflow-x: auto; font-size: 0.88rem; line-height: 1.55;
+    border: 1px solid var(--line); margin: 0;
+  }
+  pre .k { color: var(--running); } pre .s { color: var(--done); }
+  pre .c { color: var(--muted); } pre .f { color: #8250df; }
+  @media (prefers-color-scheme: dark) { pre .f { color: #d2a8ff; } }
+  p code { background: var(--codebg); padding: 0.1em 0.4em; border-radius: 5px; font-size: 0.88em; }
+
+  .layers { display: grid; gap: 0.9rem; grid-template-columns: 1fr 1fr; margin-top: 0.4rem; }
+  @media (max-width: 560px) { .layers { grid-template-columns: 1fr; } }
+  .layer { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 1rem 1.1rem; }
+  .layer h3 { margin: 0 0 0.3rem; font-size: 1rem; }
+  .layer h3 code { font-size: 1rem; color: var(--accent); background: none; padding: 0; }
+  .layer p { margin: 0; font-size: 0.92rem; color: var(--muted); }
+
+  /* mini replica of the real status.html the library renders */
+  .dash { background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .dash .bar { padding: 0.6rem 1rem; border-bottom: 1px solid var(--line); font-size: 0.9rem; }
+  .dash .bar b { font-weight: 700; }
+  .dash table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+  .dash td { padding: 0.4rem 1rem; border-bottom: 1px solid var(--line); }
+  .dash tr:last-child td { border-bottom: 0; }
+  .dash .nm { font-family: ui-monospace, monospace; }
+  .dash .ind { padding-left: 2.4rem; }
+  .pill { color: #fff; padding: 0.05rem 0.5rem; border-radius: 999px; font-size: 0.78rem; }
+  .pill.running { background: var(--running); } .pill.done { background: var(--done); }
+  .pill.failed { background: var(--failed); }
+  .right { text-align: right; font-variant-numeric: tabular-nums; }
+
+  footer { padding: 2.5rem 0 4rem; color: var(--muted); font-size: 0.9rem; }
+  footer a { color: var(--accent); }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1 class="brand mono">stagehand</h1>
+    <p class="tagline">Orchestrate &amp; monitor experiment sweeps.</p>
+    <p class="lede">
+      A tiny Python library for the unglamorous half of running experiments:
+      <b>knowing what's running, what finished, and what died</b> — and not kicking off the
+      expensive stage until the cheap one passed its checks. Pure standard library, no
+      framework to adopt. Drop it into a sweep and watch the whole thing in your browser.
+    </p>
+    <div class="btns">
+      <a class="btn primary" href="https://github.com/ArcadiaImpact/stagehand">GitHub →</a>
+      <a class="btn ghost" href="https://github.com/ArcadiaImpact/stagehand#readme">Read the docs</a>
+    </div>
+  </header>
+
+  <section>
+    <h2>The staircase</h2>
+    <p>
+      A sweep is a sequence of <b>stages</b>, each followed by a <b>gate</b> that drops
+      unhealthy units before the next stage spends real compute. Barriers between stages —
+      because a gate needs the whole previous stage before it can decide what survives.
+    </p>
+<pre><span class="k">async with</span> live_dashboard(<span class="s">"runs"</span>, title=<span class="s">"my sweep"</span>):
+    trained = <span class="k">await</span> stage(cells, train_one, concurrency=<span class="s">4</span>)        <span class="c"># barrier</span>
+    healthy, failed = gate(trained, gate_train,                  <span class="c"># drop the dead</span>
+                           monitor_path=<span class="k">lambda</span> r: r[<span class="s">"dir"</span>] / <span class="s">"train.progress.json"</span>)
+
+    evals = <span class="k">await</span> stage(healthy, eval_one, concurrency=<span class="s">8</span>)         <span class="c"># barrier</span>
+    write_manifest(healthy, failed, evals)
+
+    <span class="k">await</span> headless_handoff(<span class="s">"hand the manifest to a Workflow"</span>, cwd=repo)  <span class="c"># optional tail</span></pre>
+  </section>
+
+  <section>
+    <h2>What you watch</h2>
+    <p class="muted">
+      Every unit of work writes a small JSON file as it runs; the dashboard reads that tree
+      and renders one auto-refreshing page. A unit that flunks a gate goes red — the
+      broken-harness failure mode shows up instead of silently poisoning the results.
+    </p>
+    <div class="dash">
+      <div class="bar"><b style="color:var(--accent)">my sweep</b>
+        <span class="muted">· 1h07m elapsed · 6 units</span> &nbsp;
+        <b style="color:var(--done)">9 done</b> &nbsp;
+        <b style="color:var(--running)">2 running</b> &nbsp;
+        <b style="color:var(--failed)">1 failed</b>
+      </div>
+      <table>
+        <tr><td class="nm">cell_s0</td><td><span class="pill done">done</span></td><td class="right">256/256</td><td class="muted">acc 0.74</td></tr>
+        <tr><td class="nm ind">cell_s0 · eval</td><td><span class="pill done">done</span></td><td class="right">1/1</td><td class="muted">acc 0.74 / rej 0.26</td></tr>
+        <tr><td class="nm">cell_s1</td><td><span class="pill running">running</span></td><td class="right">181/256</td><td class="muted">loss 0.42</td></tr>
+        <tr><td class="nm">cell_s2</td><td><span class="pill failed">failed</span></td><td class="right">256/256</td><td style="color:var(--failed)">gate: no/invalid checkpoint</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Four layers, each usable on its own</h2>
+    <div class="layers">
+      <div class="layer">
+        <h3><code>monitor</code></h3>
+        <p>A file-backed <span class="mono">running/done/failed</span> + <span class="mono">done/total</span> ticker per unit of work. Units link via <span class="mono">parent</span> into a tree. Captures exceptions, then re-raises.</p>
+      </div>
+      <div class="layer">
+        <h3><code>dashboard</code></h3>
+        <p>Render that tree into one self-contained, auto-refreshing HTML page. Title and per-row note are injectable; everything else is automatic.</p>
+      </div>
+      <div class="layer">
+        <h3><code>pipeline</code></h3>
+        <p>The staircase: <span class="mono">stage</span> (a semaphore-bounded barrier) → <span class="mono">gate</span> (drop the dead, mark them red) → next stage. Plus a live-dashboard context and a headless-Claude handoff.</p>
+      </div>
+      <div class="layer">
+        <h3><code>serve</code></h3>
+        <p>Put the dashboard behind a Cloudflare quick tunnel for a public live link — <span class="mono">serve(dir) → (url, stop)</span>. Watch a run from anywhere. (Needs the <span class="mono">cloudflared</span> binary.)</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Quickstart</h2>
+<pre><span class="c"># add it</span>
+uv add git+https://github.com/ArcadiaImpact/stagehand
+
+<span class="c"># or clone and run the worked example (fake compute, no network)</span>
+git clone https://github.com/ArcadiaImpact/stagehand &amp;&amp; cd stagehand
+make example     <span class="c"># runs the staircase → writes runs/status.html</span>
+make test        <span class="c"># 20 unit tests</span></pre>
+    <p class="muted" style="margin-top:1rem">
+      The single primitive underneath it all:
+    </p>
+<pre><span class="k">with</span> monitor(<span class="s">"cell_s0"</span>, total=<span class="s">256</span>, path=<span class="s">"runs/cell_s0/train.progress.json"</span>,
+             parent=<span class="s">"sweep"</span>) <span class="k">as</span> m:
+    <span class="k">for</span> batch <span class="k">in</span> batches:
+        m.update(loss=train_step(batch))   <span class="c"># advance the ticker, record fields</span></pre>
+  </section>
+
+  <footer>
+    <p>
+      <span class="mono">stagehand</span> — extracted from a real research sweep and de-coupled from any one experiment.
+      Pure stdlib core. ·
+      <a href="https://github.com/ArcadiaImpact/stagehand">github.com/ArcadiaImpact/stagehand</a>
+    </p>
+  </footer>
+
+</div>
+</body>
+</html>
