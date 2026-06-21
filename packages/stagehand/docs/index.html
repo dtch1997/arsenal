@@ -12,7 +12,7 @@
     --card: #fff; --accent: #1a73e8; --running: #1a73e8; --done: #188038;
     --failed: #d93025; --codebg: #f6f8fa; --codefg: #24292f;
     --running-soft: rgba(26,115,232,.12); --done-soft: rgba(24,128,56,.12);
-    --failed-soft: rgba(217,48,37,.11);
+    --failed-soft: rgba(217,48,37,.11); --rule: #c2c8d0;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -20,7 +20,7 @@
       --card: #161b22; --accent: #4493f8; --running: #4493f8; --done: #3fb950;
       --failed: #f85149; --codebg: #161b22; --codefg: #e6edf3;
       --running-soft: rgba(68,147,248,.16); --done-soft: rgba(63,185,80,.15);
-      --failed-soft: rgba(248,81,73,.15);
+      --failed-soft: rgba(248,81,73,.15); --rule: #3d444d;
     }
   }
   * { box-sizing: border-box; }
@@ -31,7 +31,7 @@
   .wrap { max-width: 760px; margin: 0 auto; padding: 0 1.3rem; }
   code, pre, .mono { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
 
-  header { padding: 4.5rem 0 2.5rem; border-bottom: 1px solid var(--line); }
+  header { padding: 4.5rem 0 3.2rem; border-bottom: 2px solid var(--rule); }
   .brand { font-size: 2.7rem; font-weight: 700; letter-spacing: -0.02em; margin: 0; }
   .brand::before { content: "▸ "; color: var(--accent); }
   .tagline { font-size: 1.25rem; color: var(--muted); margin: 0.6rem 0 0; }
@@ -98,6 +98,9 @@
     border-radius: 6px; padding: 0.2rem 0.65rem; font: inherit; font-size: 0.8rem; cursor: pointer;
   }
   .replay:hover { color: var(--fg); border-color: var(--muted); }
+  /* fixed pane: reserve space for the full board (5 rows) so appearing rows
+     fill in rather than reflowing the page */
+  .demo .dash-body { min-height: 11.8rem; }
   #demo-dash td { transition: none; }
   #demo-dash .prog { position: relative; min-width: 92px; }
   #demo-dash .progbar { position: absolute; left: 0; top: 3px; bottom: 3px; border-radius: 3px; z-index: 0; }
@@ -143,7 +146,7 @@
       </div>
       <div class="dash">
         <div class="bar" id="demo-bar"></div>
-        <table id="demo-dash"></table>
+        <div class="dash-body"><table id="demo-dash"></table></div>
         <div class="manifest" id="demo-manifest">✓ manifest written · 2/3 healthy · handed off to Workflow</div>
       </div>
     </div>
