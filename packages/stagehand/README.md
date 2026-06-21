@@ -11,6 +11,7 @@ Three layers, each usable on its own and pure stdlib (zero runtime deps):
 | `monitor`   | a file-backed `running/done/failed` + `done/total` ticker per unit of work; units link via `parent` into a tree |
 | `dashboard` | render that tree into one auto-refreshing HTML status page |
 | `pipeline`  | the **staircase**: `stage` (barrier) → `gate` (drop the dead) → next stage, plus a `live_dashboard` context and a `headless_handoff` tail |
+| `serve`     | put `status.html` behind a Cloudflare quick tunnel for a public live link (needs the `cloudflared` binary) |
 
 ```bash
 make setup     # uv sync
@@ -85,6 +86,34 @@ starting point for a new sweep.
 
 ## Serving the dashboard
 
-`live_dashboard` only *writes* `status.html`; serving is intentionally out of scope.
-Point any static server at `runs/` (e.g. `python -m http.server` behind a tunnel) and
-the `<meta refresh>` does the rest.
+`live_dashboard` only *writes* `status.html`. `serve` is the other half — it puts that
+directory behind a local `http.server` + a [Cloudflare quick tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/)
+so you can watch the run from anywhere:
+
+```python
+from stagehand import serve
+url, stop = serve("runs")     # -> https://<random>.trycloudflare.com/status.html
+...                            # the page's <meta refresh> keeps it current
+stop()                         # tear down server + tunnel
+```
+
+In-process, alongside a live sweep:
+
+```python
+async with live_dashboard("runs", title="my sweep"):
+    url, stop = serve("runs")
+    print("watch:", url)
+    try:
+        ...   # run the staircase
+    finally:
+        stop()
+```
+
+Or standalone against a dir a sweep is already writing to:
+
+```bash
+uv run python examples/serve.py runs      # prints the URL, Ctrl-C to stop
+```
+
+The only requirement is the **`cloudflared`** binary on PATH — a binary, not a pip
+package, and touched only when you call `serve()`, so the core stays dependency-free.
