@@ -1,13 +1,9 @@
 # cowrite
 
 **Co-write Markdown drafts with an AI, in the browser.**
-
-You point `cowrite` at a `.md` file and it serves a **side-by-side editor**: raw
-Markdown on the left, rendered HTML (figures, code highlighting, MathJax) on the
-right. Pressing **⌘/Ctrl+S** — or the Save button — writes the edited Markdown
-*back to the file on disk* and re-renders the preview.
-
-That round-trip is the whole point:
+- `cowrite` serves a **side-by-side editor**: raw Markdown on the left, rendered HTML (figures, code highlighting, MathJax) on the
+right.
+- Pressing **⌘/Ctrl+S** writes the edited Markdown back to the file on disk and re-renders the preview.
 
 ```
   AI drafts draft.md  →  cowrite serve draft.md  →  human edits in browser, hits ⌘S
@@ -15,10 +11,8 @@ That round-trip is the whole point:
        └──────────── AI re-reads draft.md, keeps writing ◄──────┘
 ```
 
-Because it's a real file on disk, the AI edits the same path between rounds and
-the human just keeps the tab open. Many rounds, no copy-paste. The editor is
-served over a [Cloudflare quick tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/),
-so it works even when the draft lives on a remote box and you're on a laptop.
+The editor is served over a [Cloudflare quick tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/),
+so it works even when the draft lives on a remote box. 
 
 ## Install
 
