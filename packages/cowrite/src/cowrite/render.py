@@ -70,8 +70,15 @@ button.save { font: inherit; font-weight: 600; cursor: pointer; color: #fff;
 button.save:hover { background: #1a7f37; }
 button.save:disabled { background: #94d3a2; cursor: default; }
 .split { flex: 1 1 auto; display: flex; min-height: 0; }
-.pane { flex: 1 1 50%; min-width: 0; overflow: auto; }
-.pane.edit { border-right: 1px solid #d0d7de; display: flex; }
+.pane { min-width: 0; overflow: auto; }
+.pane.edit { flex: 0 0 var(--edit-width, 50%); border-right: 1px solid #d0d7de; display: flex; }
+.pane.view { flex: 1 1 auto; }
+.gutter { flex: 0 0 6px; cursor: col-resize; background: #d0d7de; align-self: stretch;
+  position: relative; user-select: none; touch-action: none; }
+.gutter:hover, .gutter.dragging { background: #0969da; }
+.gutter::before { content: ""; position: absolute; top: 0; bottom: 0; left: -4px; right: -4px; }
+body.resizing { cursor: col-resize; user-select: none; }
+body.resizing iframe, body.resizing textarea { pointer-events: none; }
 textarea { flex: 1 1 auto; width: 100%; border: 0; outline: none; resize: none;
   padding: 1.2rem 1.3rem; tab-size: 2;
   font: 13.5px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
@@ -84,6 +91,7 @@ textarea { flex: 1 1 auto; width: 100%; border: 0; outline: none; resize: none;
   header .path, header .status { color: #8b949e; }
   textarea { color: #e6edf3; background: #0d1117; }
   .pane.edit { border-color: #30363d; } .pane.view { background: #0d1117; }
+  .gutter { background: #30363d; } .gutter:hover, .gutter.dragging { background: #4493f8; }
   .preview a { color: #4493f8; } .preview code,.preview pre { background: #161b22 !important; }
   .preview table th,.preview table td { border-color: #30363d; }
   .preview h1,.preview h2 { border-color: #30363d; } .preview hr { background: #30363d; }
@@ -113,6 +121,7 @@ _PAGE = """<!DOCTYPE html>
 </header>
 <div class="split">
   <div class="pane edit"><textarea id="src" spellcheck="false">__MD__</textarea></div>
+  <div class="gutter" id="gutter" title="Drag to resize · double-click to reset"></div>
   <div class="pane view"><div class="preview" id="preview">__PREVIEW__</div></div>
 </div>
 <script>
@@ -158,6 +167,45 @@ src.addEventListener('keydown', (e) => {
     src.selectionStart = src.selectionEnd = s + 2; markDirty(); }
 });
 if (window.MathJax && MathJax.typesetPromise) { MathJax.typesetPromise([preview]); }
+
+// Draggable split: the gutter sets the edit pane's width as a % of the split.
+const split = document.querySelector('.split');
+const gutter = document.getElementById('gutter');
+const editPane = document.querySelector('.pane.edit');
+const WKEY = 'cowrite:edit-width';
+function applyWidth(pct) {
+  pct = Math.min(85, Math.max(15, pct));
+  editPane.style.setProperty('--edit-width', pct + '%');
+}
+const saved = parseFloat(localStorage.getItem(WKEY));
+if (saved) { applyWidth(saved); }
+function onMove(e) {
+  const r = split.getBoundingClientRect();
+  const x = (e.touches ? e.touches[0].clientX : e.clientX) - r.left;
+  applyWidth((x / r.width) * 100);
+}
+function stop() {
+  document.body.classList.remove('resizing');
+  gutter.classList.remove('dragging');
+  window.removeEventListener('mousemove', onMove);
+  window.removeEventListener('touchmove', onMove);
+  window.removeEventListener('mouseup', stop);
+  window.removeEventListener('touchend', stop);
+  const cur = editPane.style.getPropertyValue('--edit-width');
+  if (cur) { localStorage.setItem(WKEY, parseFloat(cur)); }
+}
+function start(e) {
+  e.preventDefault();
+  document.body.classList.add('resizing');
+  gutter.classList.add('dragging');
+  window.addEventListener('mousemove', onMove);
+  window.addEventListener('touchmove', onMove, { passive: false });
+  window.addEventListener('mouseup', stop);
+  window.addEventListener('touchend', stop);
+}
+gutter.addEventListener('mousedown', start);
+gutter.addEventListener('touchstart', start, { passive: false });
+gutter.addEventListener('dblclick', () => { editPane.style.removeProperty('--edit-width'); localStorage.removeItem(WKEY); });
 </script>
 </body></html>
 """
