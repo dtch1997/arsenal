@@ -22,8 +22,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/ArcadiaImpact/cowrite"
-Repository = "https://github.com/ArcadiaImpact/cowrite"
+Homepage = "https://github.com/dtch1997/cowrite"
+Repository = "https://github.com/dtch1997/cowrite"
 
 [project.scripts]
 cowrite = "cowrite.cli:main"

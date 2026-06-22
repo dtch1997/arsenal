@@ -23,7 +23,7 @@ so it works even when the draft lives on a remote box and you're on a laptop.
 ## Install
 
 ```bash
-pip install cowrite          # from a clone: pip install -e .
+pip install git+https://github.com/dtch1997/cowrite     # or, from a clone: pip install -e .
 ```
 
 For the public-URL mode you also need the `cloudflared` binary on your PATH
