@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>data browser</title>
+<style>
+  :root {
+    --bg: #fbfbfa; --panel: #fff; --line: #e6e6e3; --ink: #1b1b1a;
+    --muted: #8a8a82; --accent: #2d6cdf; --accent-soft: #e8f0fe;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: var(--ink); background: var(--bg);
+    display: flex; flex-direction: column;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  header .count { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 13px; }
+  header .spacer { flex: 1; }
+  input, button, select { font: inherit; }
+  #search {
+    padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--bg); width: 240px;
+  }
+  main { display: grid; grid-template-columns: 320px 1fr; flex: 1; min-height: 0; }
+
+  /* sidebar */
+  #sidebar {
+    border-right: 1px solid var(--line); background: var(--panel);
+    display: flex; flex-direction: column; min-height: 0;
+  }
+  #filters {
+    overflow-y: auto; max-height: 45%; border-bottom: 1px solid var(--line);
+    padding: 4px 0;
+  }
+  .filter { padding: 8px 12px; border-bottom: 1px solid var(--line); }
+  .filter:last-child { border-bottom: 0; }
+  .filter-h {
+    display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 12px;
+    text-transform: uppercase; letter-spacing: .03em; color: var(--muted); margin-bottom: 6px;
+  }
+  .filter-h .badge {
+    background: var(--accent); color: #fff; border-radius: 8px; font-size: 10px;
+    padding: 0 6px; font-weight: 600; letter-spacing: 0;
+  }
+  .cat-val {
+    display: flex; align-items: center; gap: 6px; padding: 2px 0; cursor: pointer;
+    font-size: 13px;
+  }
+  .cat-val .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cat-val .ct { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 11px; }
+  .cat-val.off .nm { color: var(--muted); }
+  .range-row { display: flex; align-items: center; gap: 6px; }
+  .range-row input {
+    width: 100%; padding: 4px 6px; border: 1px solid var(--line); border-radius: 5px;
+    background: var(--bg); font-variant-numeric: tabular-nums;
+  }
+  .range-row .dash { color: var(--muted); }
+  .range-meta { color: var(--muted); font-size: 11px; margin-top: 4px; }
+  .filters-top {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 6px 12px 2px; font-size: 11px; text-transform: uppercase;
+    letter-spacing: .04em; color: var(--muted); font-weight: 700;
+  }
+  .clear { border: 0; background: none; color: var(--accent); cursor: pointer; font-size: 11px; }
+
+  #list { overflow-y: auto; flex: 1; min-height: 0; }
+  .rec-item {
+    display: flex; gap: 8px; padding: 7px 12px; border-bottom: 1px solid var(--line);
+    cursor: pointer; align-items: baseline;
+  }
+  .rec-item:hover { background: var(--bg); }
+  .rec-item.active { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
+  .rec-idx { color: var(--muted); font: 11px var(--mono); min-width: 2.4rem; flex-shrink: 0; }
+  .rec-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .empty { color: var(--muted); padding: 20px 14px; }
+
+  /* main pane */
+  #content { overflow-y: auto; padding: 20px 24px; min-height: 0; }
+  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 18px; align-items: start; }
+  .kv .k { color: var(--muted); font-weight: 600; font-family: var(--mono); font-size: 12px; padding-top: 2px; }
+  .kv .v { white-space: pre-wrap; word-break: break-word; font-family: var(--mono); font-size: 13px; }
+  .kv .v.obj { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
+  .pill {
+    display: inline-block; background: var(--accent-soft); color: var(--accent);
+    border-radius: 5px; padding: 0 6px; font-weight: 600; font-size: 12px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">data browser</h1>
+  <span class="count" id="count"></span>
+  <span class="spacer"></span>
+  <input type="search" id="search" placeholder="search all fields…  ( / )" autocomplete="off">
+</header>
+<main>
+  <aside id="sidebar">
+    <div id="filters"></div>
+    <div id="list"></div>
+  </aside>
+  <section id="content"><div class="empty">loading…</div></section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+const state = {
+  records: [], filters: [], fields: [],
+  query: "",
+  cat: {},     // field -> Set of selected stringified values
+  range: {},   // field -> {lo, hi}  (numbers; null means open end)
+  view: [],    // indices passing the filter
+  idx: 0,
+};
+
+const valKey = v => (v === null || v === undefined) ? "—" : (typeof v === "object" ? JSON.stringify(v) : String(v));
+
+async function load() {
+  const [meta, dataText] = await Promise.all([
+    fetch("meta.json").then(r => r.json()),
+    fetch("data.jsonl").then(r => r.text()),
+  ]);
+  state.records = dataText.split("\n").filter(l => l.trim()).map(l => JSON.parse(l));
+  state.filters = meta.filters || [];
+  state.fields = meta.fields || [];
+  document.title = meta.title || "data browser";
+  $("#title").textContent = meta.title || "data browser";
+  state.filters.forEach(f => {
+    if (f.kind === "categorical") state.cat[f.name] = new Set();
+    else state.range[f.name] = { lo: null, hi: null };
+  });
+  renderFilters();
+  applyFilter();
+}
+
+// --- filtering ------------------------------------------------------------ //
+function recordMatches(rec, exceptField) {
+  const q = state.query.trim().toLowerCase();
+  if (q && !JSON.stringify(rec).toLowerCase().includes(q)) return false;
+  for (const f of state.filters) {
+    if (f.name === exceptField) continue;
+    if (f.kind === "categorical") {
+      const sel = state.cat[f.name];
+      if (sel && sel.size && !sel.has(valKey(rec[f.name]))) return false;
+    } else {
+      const r = state.range[f.name], v = rec[f.name];
+      if (r.lo !== null || r.hi !== null) {
+        if (typeof v !== "number") return false;
+        if (r.lo !== null && v < r.lo) return false;
+        if (r.hi !== null && v > r.hi) return false;
+      }
+    }
+  }
+  return true;
+}
+
+function applyFilter() {
+  state.view = [];
+  state.records.forEach((r, i) => { if (recordMatches(r, null)) state.view.push(i); });
+  if (state.idx >= state.view.length) state.idx = Math.max(0, state.view.length - 1);
+  renderCounts();
+  renderList();
+  renderContent();
+}
+
+// --- filter UI ------------------------------------------------------------ //
+function anyActive() {
+  return state.filters.some(f => f.kind === "categorical"
+    ? state.cat[f.name]?.size
+    : (state.range[f.name].lo !== null || state.range[f.name].hi !== null));
+}
+
+function renderFilters() {
+  const host = $("#filters");
+  if (!state.filters.length) { host.innerHTML = ""; return; }
+  let html = `<div class="filters-top"><span>Filters</span>` +
+    `<button class="clear" id="clearAll">clear all</button></div>`;
+  for (const f of state.filters) {
+    html += f.kind === "categorical" ? catBlock(f) : rangeBlock(f);
+  }
+  host.innerHTML = html;
+  wireFilters();
+}
+
+function catBlock(f) {
+  const sel = state.cat[f.name] || new Set();
+  // live counts under the OTHER active filters
+  const counts = new Map();
+  for (const r of state.records) {
+    if (!recordMatches(r, f.name)) continue;
+    const k = valKey(r[f.name]); counts.set(k, (counts.get(k) || 0) + 1);
+  }
+  sel.forEach(v => { if (!counts.has(v)) counts.set(v, 0); });
+  const order = (f.values || []).map(valKey);
+  [...counts.keys()].forEach(k => { if (!order.includes(k)) order.push(k); });
+  const rows = order.map(k => {
+    const on = sel.has(k), ct = counts.get(k) || 0;
+    return `<label class="cat-val${on ? "" : " off"}">` +
+      `<input type="checkbox" data-cat="${esc(f.name)}" data-val="${esc(k)}" ${on ? "checked" : ""}>` +
+      `<span class="nm">${esc(k)}</span><span class="ct">${ct}</span></label>`;
+  }).join("");
+  const badge = sel.size ? `<span class="badge">${sel.size}</span>` : "";
+  return `<div class="filter"><div class="filter-h">${esc(f.name)}${badge}</div>${rows}</div>`;
+}
+
+function rangeBlock(f) {
+  const r = state.range[f.name];
+  const lo = r.lo === null ? "" : r.lo, hi = r.hi === null ? "" : r.hi;
+  const active = r.lo !== null || r.hi !== null;
+  return `<div class="filter"><div class="filter-h">${esc(f.name)}` +
+    (active ? `<span class="badge">●</span>` : "") + `</div>` +
+    `<div class="range-row">` +
+    `<input type="number" data-range="${esc(f.name)}" data-end="lo" placeholder="${f.min}" value="${lo}" step="any">` +
+    `<span class="dash">–</span>` +
+    `<input type="number" data-range="${esc(f.name)}" data-end="hi" placeholder="${f.max}" value="${hi}" step="any">` +
+    `</div><div class="range-meta">data range: ${f.min} – ${f.max}</div></div>`;
+}
+
+function wireFilters() {
+  $("#filters").querySelectorAll("input[type=checkbox]").forEach(cb => {
+    cb.onchange = () => {
+      const sel = state.cat[cb.dataset.cat];
+      cb.checked ? sel.add(cb.dataset.val) : sel.delete(cb.dataset.val);
+      state.idx = 0; applyFilter(); renderFilters();
+    };
+  });
+  $("#filters").querySelectorAll("input[type=number]").forEach(inp => {
+    inp.oninput = () => {
+      const r = state.range[inp.dataset.range];
+      const raw = inp.value.trim();
+      r[inp.dataset.end] = raw === "" ? null : Number(raw);
+      state.idx = 0; applyFilter();
+    };
+  });
+  const clr = $("#clearAll");
+  if (clr) clr.onclick = () => {
+    state.filters.forEach(f => f.kind === "categorical"
+      ? state.cat[f.name].clear()
+      : (state.range[f.name] = { lo: null, hi: null }));
+    state.idx = 0; applyFilter(); renderFilters();
+  };
+}
+
+// --- list + content ------------------------------------------------------- //
+function recLabel(rec) {
+  // prefer a categorical filter field as a label, else first short scalar
+  for (const f of state.filters) {
+    if (f.kind === "categorical" && rec[f.name] != null) return valKey(rec[f.name]);
+  }
+  for (const k of state.fields) {
+    const v = rec[k];
+    if (v != null && typeof v !== "object" && String(v).length <= 80) return `${k}: ${v}`;
+  }
+  return state.fields[0] ? `${state.fields[0]}: …` : "record";
+}
+
+function renderList() {
+  const host = $("#list");
+  if (!state.view.length) { host.innerHTML = `<div class="empty">no records match.</div>`; return; }
+  host.innerHTML = state.view.map((ri, pos) =>
+    `<div class="rec-item${pos === state.idx ? " active" : ""}" data-pos="${pos}">` +
+    `<span class="rec-idx">#${ri}</span>` +
+    `<span class="rec-label">${esc(recLabel(state.records[ri]))}</span></div>`
+  ).join("");
+  host.querySelectorAll(".rec-item").forEach(el => {
+    el.onclick = () => { state.idx = +el.dataset.pos; renderList(); renderContent(); };
+  });
+}
+
+function renderContent() {
+  const c = $("#content");
+  if (!state.view.length) { c.innerHTML = `<div class="empty">no records match the filter.</div>`; return; }
+  const ri = state.view[state.idx], rec = state.records[ri];
+  const rows = state.fields.map(k => {
+    const v = rec[k];
+    const isObj = v !== null && typeof v === "object";
+    const rendered = isObj ? JSON.stringify(v, null, 2) : (v === null || v === undefined ? "—" : String(v));
+    return `<div class="k">${esc(k)}</div><div class="v${isObj ? " obj" : ""}">${esc(rendered)}</div>`;
+  }).join("");
+  c.innerHTML = `<div style="margin-bottom:14px"><span class="pill">record #${ri}</span></div>` +
+    `<div class="kv">${rows}</div>`;
+  c.scrollTop = 0;
+}
+
+function renderCounts() {
+  const n = state.view.length, total = state.records.length;
+  $("#count").textContent = (state.query || anyActive())
+    ? `${n} matched · ${total} total` : `${total} records`;
+}
+
+// --- keyboard ------------------------------------------------------------- //
+function move(d) {
+  if (!state.view.length) return;
+  state.idx = Math.min(Math.max(0, state.idx + d), state.view.length - 1);
+  renderList(); renderContent();
+  const a = $("#list .rec-item.active");
+  if (a) a.scrollIntoView({ block: "nearest" });
+}
+document.addEventListener("keydown", e => {
+  if (e.target.matches("input")) {
+    if (e.key === "Escape") e.target.blur();
+    return;
+  }
+  if (e.key === "j" || e.key === "ArrowDown") { e.preventDefault(); move(1); }
+  else if (e.key === "k" || e.key === "ArrowUp") { e.preventDefault(); move(-1); }
+  else if (e.key === "/") { e.preventDefault(); $("#search").focus(); }
+});
+$("#search").oninput = e => { state.query = e.target.value; state.idx = 0; applyFilter(); renderFilters(); };
+
+load().catch(err => { $("#content").innerHTML = `<div class="empty">failed to load: ${esc(err)}</div>`; });
+</script>
+</body>
+</html>

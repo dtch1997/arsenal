@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "databrowser"
+version = "0.1.0"
+description = "Minimal JSONL data browser: validate, build a static HTML browser, serve it over a Cloudflare quick tunnel."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dependencies = []
+
+[project.scripts]
+databrowser = "databrowser.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["databrowser"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"databrowser/browser.html" = "databrowser/browser.html"
