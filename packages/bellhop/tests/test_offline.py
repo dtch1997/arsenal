@@ -1,16 +1,21 @@
-"""Offline unit tests — pure logic, no live pod."""
+"""Offline unit tests — pure logic, no live pod / sandbox."""
 
 import os
+from datetime import timedelta
 
 import pytest
 
 from bellhop import (
+    BellhopError,
+    ModalConfig,
     PodConfig,
     PreflightError,
     ProvisionError,
     RemoteJobError,
     RunpodError,
+    open_box,
 )
+from bellhop.modal_box import _create_kwargs
 from bellhop.run import _is_git
 
 
@@ -118,3 +123,65 @@ def test_missing_api_key_raises(monkeypatch):
     monkeypatch.delenv("RUNPOD_API_KEY", raising=False)
     with pytest.raises(PreflightError):
         _api_key(None)
+
+
+# --- Modal backend (no network / no real sandbox) ---------------------------
+
+def test_runpod_error_is_bellhop_alias():
+    assert RunpodError is BellhopError
+    assert issubclass(ProvisionError, BellhopError)
+
+
+def test_modal_create_kwargs_gpu_and_ttl():
+    cfg = ModalConfig(gpu="A100", cpu=2.0, memory=4096,
+                      timeout=timedelta(hours=2), idle_timeout=timedelta(minutes=10))
+    kw = _create_kwargs(cfg)
+    assert kw["gpu"] == "A100"
+    assert kw["cpu"] == 2.0 and kw["memory"] == 4096
+    assert kw["timeout"] == 7200          # hard max lifetime, seconds
+    assert kw["idle_timeout"] == 600      # idle terminate, seconds
+
+
+def test_modal_create_kwargs_defaults():
+    kw = _create_kwargs(ModalConfig())    # CPU box, default TTL
+    assert "gpu" not in kw                # None -> omitted (CPU)
+    assert kw["timeout"] == 24 * 3600     # default 24h
+    assert "idle_timeout" not in kw       # None -> omitted
+
+
+def test_modal_ttl_none_falls_back_to_modal_default():
+    kw = _create_kwargs(ModalConfig(timeout=None))
+    assert kw["timeout"] == 300           # Modal's own create default
+
+
+def test_modal_env_and_volumes_only_when_set():
+    assert "env" not in _create_kwargs(ModalConfig())
+    assert _create_kwargs(ModalConfig(env={"K": "v"}))["env"] == {"K": "v"}
+
+
+def test_open_box_rejects_unknown_backend():
+    import asyncio
+
+    async def _go():
+        async with open_box(object()):
+            pass
+
+    with pytest.raises(PreflightError):
+        asyncio.run(_go())
+
+
+# Image resolution actually builds a modal.Image, so it needs the extra.
+def test_modal_image_resolution_default_and_preset():
+    pytest.importorskip("modal")
+    import modal
+
+    assert isinstance(ModalConfig().resolve_image(), modal.Image)
+    assert isinstance(ModalConfig(image_preset="debian-slim").resolve_image(), modal.Image)
+    # a registry string is wrapped via from_registry
+    assert isinstance(ModalConfig(image="python:3.11-slim").resolve_image(), modal.Image)
+
+
+def test_modal_unknown_preset_raises():
+    pytest.importorskip("modal")
+    with pytest.raises(PreflightError):
+        ModalConfig(image_preset="does-not-exist").resolve_image()

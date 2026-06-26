@@ -1,6 +1,8 @@
-"""bellhop: check your code into an ephemeral RunPod pod, run it, bring results back, check out."""
+"""bellhop: check your code into an ephemeral box (RunPod pod or Modal sandbox), run it, bring results back, check out."""
 
+from .backend import ExecBox, ExecResult, open_box
 from .errors import (
+    BellhopError,
     GcsUploadError,
     PodNotReadyError,
     PreflightError,
@@ -10,16 +12,23 @@ from .errors import (
     RunpodError,
 )
 from .graphql import RunpodGraphQL
-from .pod import IMAGE_PRESETS, ExecResult, Pod, PodConfig, pod
+from .modal_box import ModalConfig, Sandbox, sandbox
+from .pod import IMAGE_PRESETS, Pod, PodConfig, pod
 from .probes import HttpProbe, LogMarkerProbe, ReadyProbe, SshProbe, TcpProbe
 from .rest import RunpodRest
 from .run import RunResult, RunSpec, run, run_many
 
 __all__ = [
-    "pod", "Pod", "PodConfig", "ExecResult", "IMAGE_PRESETS",
+    # backend-agnostic surface
     "run", "run_many", "RunSpec", "RunResult",
+    "open_box", "ExecBox", "ExecResult",
+    # RunPod backend
+    "pod", "Pod", "PodConfig", "IMAGE_PRESETS",
     "RunpodRest", "RunpodGraphQL",
     "ReadyProbe", "SshProbe", "TcpProbe", "HttpProbe", "LogMarkerProbe",
-    "RunpodError", "PreflightError", "ProvisionError", "PodNotReadyError",
+    # Modal backend
+    "sandbox", "Sandbox", "ModalConfig",
+    # errors
+    "BellhopError", "RunpodError", "PreflightError", "ProvisionError", "PodNotReadyError",
     "RemoteJobError", "ResultsMissingError", "GcsUploadError",
 ]

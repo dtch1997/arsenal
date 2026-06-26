@@ -3,38 +3,46 @@
 Mirrors the exit-code ladder of the original ``run.sh`` driver so callers can
 branch on failure mode instead of parsing exit codes:
 
-    10 preflight, 20 provision, 30 ssh-never-ready,
+    10 preflight, 20 provision, 30 never-ready,
     40 remote-job-failed, 50 results-missing, 60 gcs-upload-failed.
+
+The hierarchy is provider-agnostic (RunPod *and* Modal): ``ProvisionError`` is
+raised when either a pod or a sandbox fails to come up, ``RemoteJobError`` when
+the job exits non-zero on either, and so on.
 """
 
 from __future__ import annotations
 
 
-class RunpodError(Exception):
+class BellhopError(Exception):
     """Base for everything this library raises."""
 
     exit_code = 1
 
 
-class PreflightError(RunpodError):
-    """Bad config or missing local prerequisite (key, gcloud, codebase)."""
+# Back-compat alias: the base used to be RunPod-specific.
+RunpodError = BellhopError
+
+
+class PreflightError(BellhopError):
+    """Bad config or missing local prerequisite (key, gcloud, codebase, modal)."""
 
     exit_code = 10
 
 
-class ProvisionError(RunpodError):
-    """Pod create failed (e.g. out of stock, bad image/gpu id)."""
+class ProvisionError(BellhopError):
+    """Box create failed (pod out of stock / bad image-gpu id, or sandbox create)."""
 
     exit_code = 20
 
 
-class PodNotReadyError(RunpodError):
-    """Pod never became functional within the timeout."""
+class PodNotReadyError(BellhopError):
+    """Box never became functional within the timeout."""
 
     exit_code = 30
 
 
-class RemoteJobError(RunpodError):
+class RemoteJobError(BellhopError):
     """The remote command(s) exited non-zero."""
 
     exit_code = 40
@@ -45,13 +53,13 @@ class RemoteJobError(RunpodError):
         self.log_tail = log_tail
 
 
-class ResultsMissingError(RunpodError):
+class ResultsMissingError(BellhopError):
     """The job produced no results directory to pull back."""
 
     exit_code = 50
 
 
-class GcsUploadError(RunpodError):
+class GcsUploadError(BellhopError):
     """Uploading the pulled artifacts to GCS failed."""
 
     exit_code = 60

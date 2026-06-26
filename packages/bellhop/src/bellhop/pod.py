@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import AsyncIterator, Literal
 
+from .backend import ExecResult
 from .errors import PodNotReadyError, PreflightError, ProvisionError
 from .graphql import RunpodGraphQL
 from .probes import ReadyProbe, SshProbe
@@ -44,13 +45,6 @@ SSH_OPTS = [
 
 TAR_EXCLUDES = ["--exclude=.git", "--exclude=__pycache__", "--exclude=.venv",
                 "--exclude=node_modules", "--exclude=*.pyc"]
-
-
-@dataclass
-class ExecResult:
-    exit_code: int
-    stdout: str
-    stderr: str
 
 
 @dataclass

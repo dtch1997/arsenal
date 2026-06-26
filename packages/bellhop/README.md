@@ -1,13 +1,13 @@
 # bellhop
 
-**Check your code into an ephemeral [RunPod](https://runpod.io) pod, run it,
-bring the results back, and check out** — an async Python library for
-disposable GPU pods.
+**Check your code into an ephemeral box, run it, bring the results back, and
+check out** — an async Python library for disposable compute. Two backends:
+a [RunPod](https://runpod.io) pod or a [Modal](https://modal.com) sandbox.
 
-Like a hotel bellhop: it books a room (provisions a pod), waits until it's
+Like a hotel bellhop: it books a room (provisions the box), waits until it's
 actually ready, carries your luggage up (uploads your code), and when you leave
-it brings your bags back down (pulls results) and checks out (tears the pod
-down) — so you never leave a pod (or a bill) running by accident.
+it brings your bags back down (pulls results) and checks out (tears the box
+down) — so you never leave a box (or a bill) running by accident.
 
 ```python
 import asyncio
@@ -24,22 +24,57 @@ async def main():
 asyncio.run(main())
 ```
 
-It talks to the RunPod **REST API** (`rest.runpod.io/v1`) directly over `httpx`,
-falling back to the **GraphQL API** only to set native safety timers. No
-`runpodctl`, no vendored SDK.
+The same code runs on Modal by swapping the config — `sandbox(ModalConfig(...))`
+instead of `pod(PodConfig(...))` (see [Two backends](#two-backends) below).
+
+The RunPod backend talks to the RunPod **REST API** (`rest.runpod.io/v1`)
+directly over `httpx`, falling back to the **GraphQL API** only to set native
+safety timers. No `runpodctl`, no vendored SDK. The Modal backend drives a
+Modal **Sandbox** via the `modal` SDK.
 
 ## Install
 
 ```bash
-pip install bellhop          # or: pip install git+https://github.com/dtch1997/bellhop
+pip install bellhop          # RunPod backend (or: pip install git+https://github.com/dtch1997/bellhop)
+pip install bellhop[modal]   # add the Modal backend
 ```
 
-Set `RUNPOD_API_KEY` in your environment. Connection uses your SSH keypair
-(`~/.ssh/id_ed25519` by default): bellhop injects the public key as the pod's
-`PUBLIC_KEY` env so `root@pod` is reachable. (GCS upload, if you enable it,
-needs `gcloud` on your `PATH`.)
+For the **RunPod** backend, set `RUNPOD_API_KEY`. Connection uses your SSH
+keypair (`~/.ssh/id_ed25519` by default): bellhop injects the public key as the
+pod's `PUBLIC_KEY` env so `root@pod` is reachable. For the **Modal** backend,
+configure Modal auth (`modal token new`, or `MODAL_TOKEN_ID` /
+`MODAL_TOKEN_SECRET`). (GCS upload, if you enable it, needs `gcloud` on your
+`PATH` either way.)
 
-## "Return when functional" — the hard part
+## Two backends
+
+Both backends implement the same `ExecBox` contract — `exec` / `push` / `pull`
+/ `exists_remote` / `teardown` — so the high-level `run()` / `run_many()`
+pipeline (below) is provider-agnostic: hand it a `PodConfig` for RunPod or a
+`ModalConfig` for Modal and everything else is identical.
+
+```python
+from bellhop import sandbox, ModalConfig
+
+async with sandbox(ModalConfig(gpu="A10G")) as b:   # CPU box: omit gpu
+    await b.push("./mycode", "/workspace/job")
+    r = await b.exec("cd /workspace/job && python train.py")
+    print(r.stdout)
+    await b.pull("/workspace/job/out", "./results")
+# sandbox terminated on exit (pass keep=True to leave it up)
+```
+
+What differs between the two:
+
+| | RunPod (`PodConfig`, `pod()`) | Modal (`ModalConfig`, `sandbox()`) |
+|---|---|---|
+| GPU vocab | `gpu_id="NVIDIA GeForce RTX 4090"` | `gpu="A10G"` / `"A100"` / `"H100"` … |
+| Image | docker ref / `image_preset` (pytorch-cuda…) | `modal.Image`, registry string, or `image_preset` (`debian-slim`, `pytorch-cuda`); plus `pip=`/`apt=` |
+| Readiness | SSH/probe wait (below) | none — `create()` returns an execable box |
+| Native TTL | `stop_after` / `terminate_after` (GraphQL) | `timeout` (hard kill) / `idle_timeout` |
+| Auth | `RUNPOD_API_KEY` + SSH keypair | Modal token (`modal token new`) |
+
+## "Return when functional" — the hard part (RunPod only)
 
 `desiredStatus == RUNNING` is necessary but **not sufficient**: sshd / your
 server typically lags the RUNNING state by 30–60s. So once a pod is routable
@@ -54,6 +89,9 @@ PodConfig(..., ready=SshProbe("true"))            # ssh job pods (default)
 PodConfig(..., ready=HttpProbe(8000, "/health"))  # a served endpoint
 PodConfig(..., ready=LogMarkerProbe("server up")) # headless pods
 ```
+
+(Modal sandboxes are execable as soon as `create()` returns, so there's no
+probe step on that backend.)
 
 ## Two ways to use it
 
@@ -86,13 +124,18 @@ print(res.remote_exit, res.local_results)
 
 `run()` provisions → waits-functional → uploads the codebase (local dir *or* git
 URL) → runs `setup` then `run` (tee'd to `results/run.log`) → pulls the results
-dir back → optionally uploads to GCS → tears down → returns a `RunResult`.
+dir back → optionally uploads to GCS → tears down → returns a `RunResult`. Pass
+a `ModalConfig` instead of a `PodConfig` to run the exact same pipeline on a
+Modal sandbox.
 
-CLI equivalent:
+CLI equivalent (RunPod, then the Modal form):
 
 ```bash
 bellhop run --slug demo --codebase ./mycode --run "python go.py" \
             --compute gpu --gpu-id "NVIDIA GeForce RTX 4090"
+
+bellhop run --backend modal --slug demo --codebase ./mycode --run "python go.py" \
+            --gpu A10G
 ```
 
 ### Fan out a sweep
@@ -140,6 +183,11 @@ field), so setting a timer routes pod creation through GraphQL automatically.
 > is what you should rely on for prompt teardown. Native TTL currently applies
 > to GPU pods only (the on-demand path); CPU pods rely on `finally` alone.
 
+On the **Modal** backend the equivalents are first-class `create` kwargs:
+`ModalConfig(timeout=timedelta(hours=24))` is the hard max lifetime and
+`idle_timeout=timedelta(minutes=30)` terminates the sandbox after inactivity —
+no GraphQL detour, and they apply to CPU and GPU sandboxes alike.
+
 ## Optional: persist results to GCS
 
 Off by default. Pass `gcs_base` (or `--gcs-base`) to upload the pulled results
@@ -153,27 +201,33 @@ RunSpec(slug="demo", codebase="./code", run="python go.py",
 
 ## Typed errors
 
-`RunpodError` subclasses let you branch on failure mode:
-`PreflightError` (bad config / missing key), `ProvisionError` (create failed),
-`PodNotReadyError` (never became functional), `RemoteJobError` (carries
-`.remote_exit` + `.log_tail`), `ResultsMissingError`, `GcsUploadError`.
+`BellhopError` subclasses let you branch on failure mode:
+`PreflightError` (bad config / missing key / `modal` not installed),
+`ProvisionError` (pod or sandbox create failed), `PodNotReadyError` (never became
+functional), `RemoteJobError` (carries `.remote_exit` + `.log_tail`),
+`ResultsMissingError`, `GcsUploadError`. (`RunpodError` is a back-compat alias
+for `BellhopError`.)
 
 ## Notes
 
-- Code/result transfer is **tar-over-ssh** — only needs `tar` + `ssh` in the
-  image (no rsync).
-- Env vars passed to `exec(env=...)` are exported *inside* the remote script and
-  fed over stdin, so a fresh sshd session picks them up and secret values never
-  appear in the pod's process list.
-- On out-of-stock, a `COMMUNITY` request retries on `SECURE` automatically
+- Code/result transfer is **tar-over-ssh** on RunPod and **tar-over-exec** on
+  Modal — only needs `tar` in the image (no rsync; on RunPod also `ssh`).
+- Env vars passed to `exec(env=...)` never appear in the box's process list:
+  RunPod exports them inside a script fed over stdin; Modal passes them over its
+  API, not argv.
+- On out-of-stock, a RunPod `COMMUNITY` request retries on `SECURE` automatically
   (toggle with `cloud_fallback=False`).
+- The Modal default image is `debian_slim` with `git` + `tar`; add packages with
+  `ModalConfig(pip=[...], apt=[...])`, or supply your own `modal.Image` /
+  registry ref (assumed to already have `tar`).
 
 ## Development
 
 ```bash
 pip install -e ".[dev]"
-pytest                              # offline unit tests (no pod, no cost)
-RUNPOD_LIVE=1 pytest tests/integration_live.py -s   # billed end-to-end test
+pytest                              # offline unit tests (no pod/sandbox, no cost)
+RUNPOD_LIVE=1 pytest tests/integration_live.py -s     # billed RunPod end-to-end test
+MODAL_LIVE=1  pytest tests/integration_modal.py -s    # billed Modal end-to-end test
 ```
 
 ## License

@@ -1,4 +1,4 @@
-"""CLI with flag parity to the original run.sh, over run()."""
+"""CLI over run() — one codebase on an ephemeral RunPod pod or Modal sandbox."""
 
 from __future__ import annotations
 
@@ -8,41 +8,55 @@ import json
 import sys
 from datetime import timedelta
 
-from .errors import RunpodError
+from .errors import BellhopError
+from .modal_box import ModalConfig
 from .pod import PodConfig
 from .run import DEFAULT_GCS_BASE, RunSpec, run
 
 
 def _parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="bellhop", description="Run a codebase on an ephemeral RunPod pod.")
+    p = argparse.ArgumentParser(prog="bellhop", description="Run a codebase on an ephemeral RunPod pod or Modal sandbox.")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     r = sub.add_parser("run", help="provision -> run -> pull -> GCS -> teardown")
+    r.add_argument("--backend", choices=["runpod", "modal"], default="runpod")
+    # shared
     r.add_argument("--slug", required=True)
     r.add_argument("--codebase", required=True, help="local dir OR git URL")
     r.add_argument("--run", required=True, help="the command(s) to run")
     r.add_argument("--setup", default=None, help="deps, run before --run")
-    r.add_argument("--compute", choices=["cpu", "gpu"], default="cpu")
-    r.add_argument("--gpu-id", default=None, help="e.g. 'NVIDIA GeForce RTX 4090'")
-    r.add_argument("--image", default=None)
-    r.add_argument("--image-preset", default=None)
+    r.add_argument("--image", default=None, help="image (RunPod docker ref / Modal registry ref)")
+    r.add_argument("--image-preset", default=None, help="RunPod: cpu-base/pytorch-* ; Modal: debian-slim/pytorch-cuda")
     r.add_argument("--results-subdir", default="results")
     r.add_argument("--local-out", default=None)
     r.add_argument("--gcs-base", default=DEFAULT_GCS_BASE)
     r.add_argument("--no-gcs", action="store_true", help="skip GCS upload")
+    r.add_argument("--env-json", default=None, help="JSON object of extra box env vars")
+    r.add_argument("--keep-pod", action="store_true", help="leave the box up after the run")
+    # RunPod-specific
+    r.add_argument("--compute", choices=["cpu", "gpu"], default="cpu")
+    r.add_argument("--gpu-id", default=None, help="RunPod GPU, e.g. 'NVIDIA GeForce RTX 4090'")
     r.add_argument("--container-disk-gb", type=int, default=20)
     r.add_argument("--cloud", choices=["SECURE", "COMMUNITY"], default="COMMUNITY")
-    r.add_argument("--env-json", default=None, help="JSON object of extra pod env vars")
     r.add_argument("--ready-timeout", type=int, default=420)
-    r.add_argument("--keep-pod", action="store_true")
+    # Modal-specific
+    r.add_argument("--gpu", default=None, help="Modal GPU, e.g. 'A10G', 'A100', 'H100', 'T4', 'L4'")
+    r.add_argument("--pip", action="append", default=None, help="Modal: pip-install onto the image (repeatable)")
+    r.add_argument("--timeout-hours", type=float, default=24.0, help="Modal sandbox hard max lifetime")
     return p
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
-    env = json.loads(args.env_json) if args.env_json else {}
-
-    pod_config = PodConfig(
+def _build_backend(args, env: dict):
+    if args.backend == "modal":
+        return ModalConfig(
+            gpu=args.gpu,
+            image=args.image,
+            image_preset=args.image_preset,
+            pip=list(args.pip or []),
+            env=dict(env),
+            timeout=timedelta(hours=args.timeout_hours),
+        )
+    return PodConfig(
         compute=args.compute,
         gpu_id=args.gpu_id,
         image=args.image,
@@ -52,6 +66,13 @@ def main(argv: list[str] | None = None) -> int:
         env=dict(env),
         ready_timeout=timedelta(seconds=args.ready_timeout),
     )
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    env = json.loads(args.env_json) if args.env_json else {}
+
+    backend = _build_backend(args, env)
     spec = RunSpec(
         slug=args.slug,
         codebase=args.codebase,
@@ -64,14 +85,15 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     try:
-        res = asyncio.run(run(spec, pod_config, keep_pod=args.keep_pod))
-    except RunpodError as e:
+        res = asyncio.run(run(spec, backend, keep_pod=args.keep_pod))
+    except BellhopError as e:
         print(f"ERROR [{type(e).__name__}]: {e}", file=sys.stderr)
         return e.exit_code
 
     print("\n===================== BELLHOP RESULT =====================")
+    print(f"backend:       {args.backend}")
     print(f"slug:          {res.slug}")
-    print(f"pod_id:        {res.pod_id} (torn down: {'no' if args.keep_pod else 'yes'})")
+    print(f"box_id:        {res.pod_id} (torn down: {'no' if args.keep_pod else 'yes'})")
     print(f"remote_exit:   {res.remote_exit}")
     print(f"local_results: {res.local_results}")
     print(f"gcs_artifacts: {res.gcs_uri}")
