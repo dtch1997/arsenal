@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "reportly"
+version = "0.1.0"
+description = "Enforce a consistent standard for experiment reports: scaffold, lint, and build a static report site."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+dependencies = ["markdown-it-py>=3.0"]
+
+[project.scripts]
+reportly = "reportly.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["reportly"]
