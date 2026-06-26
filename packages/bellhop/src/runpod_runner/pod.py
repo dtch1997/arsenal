@@ -12,13 +12,18 @@ import os
 import shlex
 import time
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import AsyncIterator, Literal
 
 from .errors import PodNotReadyError, PreflightError, ProvisionError
+from .graphql import RunpodGraphQL
 from .probes import ReadyProbe, SshProbe
 from .rest import RunpodRest
+
+
+def _iso(dt: datetime) -> str:
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 # Image presets — kept inline so the library is standalone (no jarvis catalog).
 IMAGE_PRESETS = {
@@ -71,6 +76,10 @@ class PodConfig:
     provision_timeout: timedelta = timedelta(seconds=300)
     ready_timeout: timedelta = timedelta(seconds=420)
     poll_interval: float = 8.0
+    # native server-side safety timers (GraphQL only; survive host death).
+    # stop = halt compute (disk persists); terminate = delete (all billing stops).
+    stop_after: timedelta | None = timedelta(hours=24)
+    terminate_after: timedelta | None = timedelta(hours=72)
 
     def resolve_image(self) -> str:
         if self.image:
@@ -118,6 +127,39 @@ class PodConfig:
             body["volumeInGb"] = self.volume_gb
             body["volumeMountPath"] = self.volume_mount_path
         return body
+
+    def has_ttl(self) -> bool:
+        return bool(self.stop_after or self.terminate_after)
+
+    def to_graphql_input(self) -> dict:
+        """Input for podFindAndDeployOnDemand — the only create path with TTL.
+
+        Note the GraphQL shape differs from REST: gpuTypeId is singular, ports
+        is a comma-joined string, and env is a list of {key, value} objects.
+        """
+        if self.compute != "gpu" or not self.gpu_id:
+            raise PreflightError("native TTL (stop_after/terminate_after) requires compute='gpu' + gpu_id")
+        env = dict(self.env)
+        env.setdefault("PUBLIC_KEY", self.pubkey_text())
+        inp: dict = {
+            "cloudType": self.cloud,
+            "name": self.name,
+            "imageName": self.resolve_image(),
+            "gpuTypeId": self.gpu_id,
+            "gpuCount": self.gpu_count,
+            "containerDiskInGb": self.container_disk_gb,
+            "ports": ",".join(self.ports),
+            "env": [{"key": k, "value": v} for k, v in env.items()],
+        }
+        if self.volume_gb:
+            inp["volumeInGb"] = self.volume_gb
+            inp["volumeMountPath"] = self.volume_mount_path
+        now = datetime.now(timezone.utc)
+        if self.stop_after:
+            inp["stopAfter"] = _iso(now + self.stop_after)
+        if self.terminate_after:
+            inp["terminateAfter"] = _iso(now + self.terminate_after)
+        return inp
 
 
 class Pod:
@@ -269,6 +311,18 @@ async def _run_shell(pipeline: str, what: str) -> None:
         raise RuntimeError(f"{what} failed (rc={proc.returncode}): {err.decode('utf-8','replace')[:500]}")
 
 
+async def _gql_create(config: PodConfig, api_key: str | None) -> dict:
+    async with RunpodGraphQL(api_key=api_key) as gql:
+        gi = config.to_graphql_input()
+        try:
+            return await gql.create_pod_on_demand(gi)
+        except ProvisionError:
+            if config.cloud == "COMMUNITY" and config.cloud_fallback:
+                gi["cloudType"] = "SECURE"
+                return await gql.create_pod_on_demand(gi)
+            raise
+
+
 @contextlib.asynccontextmanager
 async def pod(config: PodConfig, *, keep: bool = False,
               api_key: str | None = None) -> AsyncIterator[Pod]:
@@ -278,15 +332,19 @@ async def pod(config: PodConfig, *, keep: bool = False,
     unless ``keep=True``.
     """
     async with RunpodRest(api_key=api_key) as rest:
-        body = config.to_create_body()
-        try:
-            created = await rest.create_pod(body)
-        except ProvisionError:
-            if config.cloud == "COMMUNITY" and config.cloud_fallback:
-                body["cloudType"] = "SECURE"
+        if config.has_ttl() and config.compute == "gpu":
+            # Native server-side TTL is GraphQL-only (and on-demand = GPU only).
+            created = await _gql_create(config, api_key)
+        else:
+            body = config.to_create_body()
+            try:
                 created = await rest.create_pod(body)
-            else:
-                raise
+            except ProvisionError:
+                if config.cloud == "COMMUNITY" and config.cloud_fallback:
+                    body["cloudType"] = "SECURE"
+                    created = await rest.create_pod(body)
+                else:
+                    raise
         pod_id = created.get("id") or created.get("pod", {}).get("id")
         if not pod_id:
             raise ProvisionError(f"could not parse pod id from create response: {created}")

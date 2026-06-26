@@ -9,6 +9,7 @@ from .errors import (
     ResultsMissingError,
     RunpodError,
 )
+from .graphql import RunpodGraphQL
 from .pod import IMAGE_PRESETS, ExecResult, Pod, PodConfig, pod
 from .probes import HttpProbe, LogMarkerProbe, ReadyProbe, SshProbe, TcpProbe
 from .rest import RunpodRest
@@ -17,7 +18,7 @@ from .run import RunResult, RunSpec, run, run_many
 __all__ = [
     "pod", "Pod", "PodConfig", "ExecResult", "IMAGE_PRESETS",
     "run", "run_many", "RunSpec", "RunResult",
-    "RunpodRest",
+    "RunpodRest", "RunpodGraphQL",
     "ReadyProbe", "SshProbe", "TcpProbe", "HttpProbe", "LogMarkerProbe",
     "RunpodError", "PreflightError", "ProvisionError", "PodNotReadyError",
     "RemoteJobError", "ResultsMissingError", "GcsUploadError",

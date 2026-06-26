@@ -98,10 +98,36 @@ results = await run_many(specs, gpu_cfg, max_concurrency=4)
 - COMMUNITY→SECURE out-of-stock fallback,
 - always-teardown via `finally`.
 
-## Known gap vs the bash driver
+## Safety timers (server-side, survive host death)
 
-The bash `--terminate-after` set a **server-side** self-destruct (survives the
-client dying). RunPod REST v1 has no equivalent field, so teardown here is
-client-side (`finally`) only. A crashed *host* process can still leak a pod.
-Backstop options on the roadmap: a `dockerStartCmd` deadline that self-deletes,
-or an external reaper. Until then, don't `kill -9` the driver.
+A crashed/killed *host* process can't run the `finally` teardown — so on top of
+it, every pod gets **native RunPod safety timers**, set atomically at create and
+enforced server-side (so they hold even if this process dies the instant after
+create). These come from the GraphQL `podFindAndDeployOnDemand` mutation — REST
+v1 has no TTL field, so a TTL routes create through GraphQL automatically.
+
+Defaults (override per `PodConfig`):
+
+```python
+PodConfig(
+    stop_after=timedelta(hours=24),       # halt compute billing; disk persists, restartable
+    terminate_after=timedelta(hours=72),  # delete the pod; all billing stops
+)
+# set either to None to disable that timer
+```
+
+`stop_after` caps the expensive compute; `terminate_after` guarantees nothing
+leaks forever. Native TTL currently requires `compute="gpu"` (the GraphQL
+on-demand path); CPU pods fall back to REST create with `finally`-only teardown.
+
+**What's verified, and what isn't.** The timers are set the canonical way —
+identical field/type/usage to `runpodctl --terminate-after` / `--stop-after`
+(the mechanism the production bash driver relied on), and the API accepts them.
+But RunPod enforces them on a **coarse schedule, not minute-precise**: in
+testing, a 4-minute timer had not fired ~8 minutes past its deadline — and
+`runpodctl`'s own `--terminate-after` behaved exactly the same. So treat the
+native timer as a *backstop measured in hours, not a precise kill switch*. The
+**primary** teardown is still the client-side `finally` (which is observed
+working on every run); the native timer only matters if the host process dies.
+A direct firing was not observed in testing (would require waiting out an
+unknown coarse window) — only that the field is set correctly.

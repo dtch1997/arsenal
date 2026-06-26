@@ -72,6 +72,47 @@ def test_error_exit_codes():
     assert issubclass(PreflightError, RunpodError)
 
 
+def test_graphql_ttl_input(tmp_path):
+    from datetime import timedelta
+    key = tmp_path / "id"
+    key.write_text("x")
+    (tmp_path / "id.pub").write_text("ssh-ed25519 AAAA test")
+    cfg = _cfg(compute="gpu", gpu_id="NVIDIA GeForce RTX 4090", ssh_key=str(key),
+               stop_after=timedelta(hours=24), terminate_after=timedelta(hours=72))
+    assert cfg.has_ttl()
+    gi = cfg.to_graphql_input()
+    # GraphQL shape differs from REST: singular gpuTypeId, ports string, env list
+    assert gi["gpuTypeId"] == "NVIDIA GeForce RTX 4090"
+    assert gi["ports"] == "22/tcp"
+    assert {"key": "PUBLIC_KEY", "value": "ssh-ed25519 AAAA test"} in gi["env"]
+    assert gi["stopAfter"].endswith("Z") and gi["terminateAfter"].endswith("Z")
+    assert gi["stopAfter"] < gi["terminateAfter"]
+
+
+def test_ttl_disabled_when_none(tmp_path):
+    cfg = _cfg(compute="gpu", gpu_id="x", stop_after=None, terminate_after=None)
+    assert not cfg.has_ttl()
+
+
+def test_graphql_ttl_requires_gpu(tmp_path):
+    from datetime import timedelta
+    cfg = _cfg(compute="cpu", stop_after=timedelta(hours=1))
+    with pytest.raises(PreflightError):
+        cfg.to_graphql_input()
+
+
+def test_cpu_with_ttl_still_builds_rest_body(tmp_path):
+    # CPU + default TTL must NOT crash: it falls back to the REST path, which
+    # has no native timer. Guards the routing fix in pod().
+    key = tmp_path / "id"
+    key.write_text("x")
+    (tmp_path / "id.pub").write_text("ssh-ed25519 AAAA test")
+    cfg = _cfg(compute="cpu", ssh_key=str(key))  # has_ttl() True by default
+    assert cfg.has_ttl()
+    body = cfg.to_create_body()
+    assert body["computeType"] == "CPU"
+
+
 def test_missing_api_key_raises(monkeypatch):
     from runpod_runner.rest import _api_key
     monkeypatch.delenv("RUNPOD_API_KEY", raising=False)
