@@ -4,14 +4,14 @@ import os
 
 import pytest
 
-from runpod_runner import (
+from bellhop import (
     PodConfig,
     PreflightError,
     ProvisionError,
     RemoteJobError,
     RunpodError,
 )
-from runpod_runner.run import _is_git
+from bellhop.run import _is_git
 
 
 def _cfg(**kw):
@@ -114,7 +114,7 @@ def test_cpu_with_ttl_still_builds_rest_body(tmp_path):
 
 
 def test_missing_api_key_raises(monkeypatch):
-    from runpod_runner.rest import _api_key
+    from bellhop.rest import _api_key
     monkeypatch.delenv("RUNPOD_API_KEY", raising=False)
     with pytest.raises(PreflightError):
         _api_key(None)

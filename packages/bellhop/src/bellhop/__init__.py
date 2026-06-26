@@ -1,4 +1,4 @@
-"""runpod-runner: async library to provision RunPod pods, run jobs, persist, tear down."""
+"""bellhop: check your code into an ephemeral RunPod pod, run it, bring results back, check out."""
 
 from .errors import (
     GcsUploadError,

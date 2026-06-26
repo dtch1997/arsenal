@@ -15,7 +15,8 @@ from pathlib import Path
 from .errors import GcsUploadError, PreflightError, RemoteJobError, ResultsMissingError
 from .pod import PodConfig, pod
 
-DEFAULT_GCS_BASE = "gs://alignment-team-general-storage/daniel/jarvis/experiments"
+# GCS upload is opt-in: pass gcs_base="gs://your-bucket/prefix" (or --gcs-base) to enable.
+DEFAULT_GCS_BASE = None
 
 
 @dataclass
@@ -56,7 +57,7 @@ async def run(spec: RunSpec, pod_config: PodConfig, *, keep_pod: bool = False,
     Path(local_out).mkdir(parents=True, exist_ok=True)
     run_dir = f"/workspace/{spec.slug}"
     results_remote = f"{run_dir}/{spec.results_subdir}"
-    pod_config.name = f"runpod-runner-{spec.slug}"
+    pod_config.name = f"bellhop-{spec.slug}"
 
     async with pod(pod_config, keep=keep_pod, api_key=api_key) as p:
         # --- upload codebase ---

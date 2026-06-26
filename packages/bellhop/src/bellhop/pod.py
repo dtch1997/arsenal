@@ -67,7 +67,7 @@ class PodConfig:
     cloud_fallback: bool = True            # COMMUNITY out-of-stock -> retry SECURE
     ports: list[str] = field(default_factory=lambda: ["22/tcp"])
     env: dict[str, str] = field(default_factory=dict)
-    name: str = "runpod-runner"
+    name: str = "bellhop"
     # auth / connection
     ssh_key: str | None = None             # private key; default ~/.ssh/id_ed25519
     ssh_user: str = "root"

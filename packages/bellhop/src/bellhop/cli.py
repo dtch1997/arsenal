@@ -14,7 +14,7 @@ from .run import DEFAULT_GCS_BASE, RunSpec, run
 
 
 def _parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="runpod-runner", description="Run a codebase on an ephemeral RunPod pod.")
+    p = argparse.ArgumentParser(prog="bellhop", description="Run a codebase on an ephemeral RunPod pod.")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     r = sub.add_parser("run", help="provision -> run -> pull -> GCS -> teardown")
@@ -69,7 +69,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR [{type(e).__name__}]: {e}", file=sys.stderr)
         return e.exit_code
 
-    print("\n================= RUNPOD-RUNNER RESULT =================")
+    print("\n===================== BELLHOP RESULT =====================")
     print(f"slug:          {res.slug}")
     print(f"pod_id:        {res.pod_id} (torn down: {'no' if args.keep_pod else 'yes'})")
     print(f"remote_exit:   {res.remote_exit}")

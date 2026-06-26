@@ -11,7 +11,7 @@ from datetime import timedelta
 
 import pytest
 
-from runpod_runner import PodConfig, RunSpec, SshProbe, run
+from bellhop import PodConfig, RunSpec, SshProbe, run
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("RUNPOD_LIVE"),
