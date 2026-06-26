@@ -17,8 +17,11 @@ Defaults (all overridable via `reportly.toml`):
 - **Front matter** — `vibe: positive | negative | mixed` (+ optional
   `preliminary: true`), rendered as badges.
 - **H1 reads as a finding**, not a topic label — a sentence stating the result.
-- **Required sections** — TL;DR · Setup · Result · Reproduce. A section is
-  matched by a heading *or* a bold lead (`**TL;DR.**`), so both house styles pass.
+- **Required sections** — TL;DR · Setup · Result · Discussion · Next steps ·
+  Reproduce. A section is matched by a heading *or* a bold lead (`**TL;DR.**`), so
+  both house styles pass; a combined `Discussion & next steps` heading satisfies
+  both. *Discussion* is takeaways / caveats / other updates; *Next steps* is the
+  concrete follow-ups.
 - **Reproduce** carries exact commands (a fenced `bash` block).
 - **Figures** referenced in the report must exist on disk.
 - **Provenance footer** — an italic line naming Branch / Model / Artifacts / Code.
@@ -65,7 +68,7 @@ Placed at or above the reports directory:
 
 ```toml
 reports_dir = "reports"
-required    = ["tldr", "setup", "result", "reproduce"]
+required    = ["tldr", "setup", "result", "discussion", "next_steps", "reproduce"]
 vibe_values = ["positive", "negative", "mixed"]
 level       = "error"          # or "warn" — whether warnings also fail
 disable     = ["result_figure"]

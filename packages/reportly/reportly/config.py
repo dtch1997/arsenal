@@ -25,17 +25,21 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 # kind -> substrings that, found in an anchor's text, satisfy that section kind.
+#
+# A combined heading like "Discussion & next steps" still satisfies both
+# `discussion` and `next_steps` (both substrings match), so it stays valid.
 DEFAULT_SECTIONS: dict[str, list[str]] = {
     "tldr": ["tl;dr", "tldr", "executive summary", "summary"],
     "context": ["context", "why this matters", "background", "motivation"],
     "setup": ["setup", "method", "protocol"],
     "result": ["result", "finding"],
-    "discussion": ["discussion", "next steps", "takeaway", "implication", "conclusion"],
+    "discussion": ["discussion", "takeaway", "implication", "conclusion", "update"],
+    "next_steps": ["next steps", "next step", "future work", "follow-up", "what's next"],
     "reproduce": ["reproduce", "reproduction", "reproducibility"],
     "appendix": ["appendix"],
 }
 
-DEFAULT_REQUIRED = ["tldr", "setup", "result", "reproduce"]
+DEFAULT_REQUIRED = ["tldr", "setup", "result", "discussion", "next_steps", "reproduce"]
 DEFAULT_VIBES = ["positive", "negative", "mixed"]
 
 

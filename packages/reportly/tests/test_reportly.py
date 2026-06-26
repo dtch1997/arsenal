@@ -27,6 +27,12 @@ Qwen3-30B, 3 seeds, SFT on a synthetic corpus.
 
 The effect is large and decays with distance.
 
+## Discussion
+The model treats the install as a general rule, not a single fact.
+
+## Next steps
+Test whether ordering the corpus by distance changes the spread.
+
 ## Reproduce
 ```bash
 uv run python -m exp.run   # seeds 0,1,2
@@ -63,6 +69,25 @@ def test_bold_lead_counts_as_anchor(tmp_path):
 def test_good_report_is_clean(tmp_path):
     issues = lint.lint_file(_write(tmp_path, GOOD))
     assert issues == [], [i.format() for i in issues]
+
+
+def test_discussion_and_next_steps_required(tmp_path):
+    no_disc = GOOD.replace("## Discussion\nThe model treats the install as a general rule, not a single fact.\n\n", "")
+    issues = lint.lint_file(_write(tmp_path, no_disc))
+    assert any(i.rule == "required_sections" and "discussion" in i.message for i in issues)
+
+    no_next = GOOD.replace("## Next steps\nTest whether ordering the corpus by distance changes the spread.\n\n", "")
+    issues = lint.lint_file(_write(tmp_path, no_next))
+    assert any(i.rule == "required_sections" and "next_steps" in i.message for i in issues)
+
+
+def test_combined_discussion_next_steps_heading_satisfies_both(tmp_path):
+    combined = GOOD.replace(
+        "## Discussion\nThe model treats the install as a general rule, not a single fact.\n\n"
+        "## Next steps\nTest whether ordering the corpus by distance changes the spread.\n",
+        "## Discussion & next steps\nIt generalizes; next, reorder the corpus by distance.\n")
+    assert not any(i.rule == "required_sections"
+                   for i in lint.lint_file(_write(tmp_path, combined)))
 
 
 def test_missing_required_section_is_error(tmp_path):

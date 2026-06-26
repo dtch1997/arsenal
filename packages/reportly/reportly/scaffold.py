@@ -29,9 +29,12 @@ the result, not the motivation.>
 <Lead with the figure, then state the claim it establishes. Put numbers in a
 Markdown table. Add `### sub-results` as separate claims if there are several.>
 
-## Discussion & next steps
-<What it means, the caveats and failed controls (report them — don't bury them),
-and what you would do next.>
+## Discussion
+<What it means: the takeaways, the caveats and failed controls (report them —
+don't bury them), and any other updates worth recording.>
+
+## Next steps
+<What you would do next — concrete follow-up experiments or open questions.>
 
 ## Reproduce
 ```bash
