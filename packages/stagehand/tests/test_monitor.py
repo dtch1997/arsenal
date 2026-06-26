@@ -33,6 +33,29 @@ def test_failure_records_error_and_reraises(tmp_path):
     assert "boom" in s["extra"]["error"] and s["done"] == 1   # progress preserved at point of failure
 
 
+def test_cleanup_removes_file_on_success(tmp_path):
+    p = tmp_path / "e.progress.json"
+    with monitor("e", total=2, path=p, min_interval=0, cleanup=True) as m:
+        assert p.exists()           # live while running
+        m.update()
+    assert not p.exists()           # ephemeral: gone once out of scope
+
+
+def test_cleanup_removes_file_on_failure(tmp_path):
+    p = tmp_path / "f.progress.json"
+    with pytest.raises(ValueError):
+        with monitor("f", total=1, path=p, min_interval=0, cleanup=True):
+            raise ValueError("boom")
+    assert not p.exists()           # removed even on failure; exception still propagated
+
+
+def test_cleanup_default_off_preserves_file(tmp_path):
+    p = tmp_path / "g.progress.json"
+    with monitor("g", total=1, path=p, min_interval=0):
+        pass
+    assert p.exists() and _load(p)["state"] == "done"   # backward-compatible default
+
+
 def test_set_without_advancing(tmp_path):
     p = tmp_path / "c.progress.json"
     with monitor("c", total=1, path=p, min_interval=0) as m:

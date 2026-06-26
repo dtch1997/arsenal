@@ -41,6 +41,7 @@ with monitor("cell_s0", total=256, path="runs/cell_s0/train.progress.json",
 - `m.set(**extra)` — record fields without advancing (forces a write).
 - `mark(path, state=..., extra=...)` — post-hoc patch a unit (e.g. it passed training but flunked a later gate). No-op if the file is gone.
 - `read_monitors(root)` — load the whole `*.progress.json` tree.
+- `monitor(..., cleanup=True)` — *ephemeral* monitor: the progress file is removed when the context exits (success or failure) instead of being left at its final state. For drivers that keep their own persistent state and only want a live ticker while a unit runs.
 
 ## 2. `dashboard` — render the tree
 
