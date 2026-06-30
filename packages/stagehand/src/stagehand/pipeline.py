@@ -15,7 +15,7 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from .monitor import read_monitors
+from .monitor import read_monitors, read_graph
 from .dashboard import render_dashboard, default_note
 
 
@@ -37,7 +37,7 @@ async def live_dashboard(runs_dir, *, title="stagehand", note_fn=default_note,
     def _render():
         (rd / out).write_text(
             render_dashboard(read_monitors(rd), start, title=title,
-                             note_fn=note_fn, refresh=refresh))
+                             note_fn=note_fn, refresh=refresh, graph=read_graph(rd)))
 
     async def writer():
         while True:

@@ -31,6 +31,7 @@ import asyncio
 import inspect
 import json
 import time
+from collections import deque
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -193,6 +194,9 @@ class Flow:
         self._node_conc: dict[str, int] = {}
         self._on_done: dict[str, list] = {}
         self._checks: list = []          # (edge_label, expected_type, provided_type)
+        # topology, for the dashboard to render the actual graph (not just progress)
+        self._node_kind: dict[str, str] = {}    # node -> map|filter|reduce|expand|gather|task
+        self._edges: set = set()                # (src_node, dst_node) node-level edges
         self._start = None
 
     # ---- ids ------------------------------------------------------------- #
@@ -205,6 +209,7 @@ class Flow:
     def map(self, node, source, fn, *, concurrency=None):
         """One task per item of `source` (a static iterable or an upstream handle),
         each running `fn(item)`; results stream into the returned handle."""
+        self._node_kind[node] = "map"
         if concurrency:
             self._node_conc[node] = concurrency
         out = Handle(self, node, elem_type=_ret(fn))
@@ -217,6 +222,7 @@ class Flow:
             out.add(tid)
 
         if isinstance(source, Handle):
+            self._edges.add((source.node, node))
             self._record(f"map {node!r} <- {source.node!r}", _param0(fn), source.elem_type)
             source.subscribe(on_id=mint_dep, on_close=out.close)
         else:
@@ -236,6 +242,7 @@ class Flow:
         is marked `failed` ("filtered: …") on the dashboard, and any task that
         depended on it is skipped.
         """
+        self._node_kind[node] = "filter"
         if concurrency:
             self._node_conc[node] = concurrency
         src_elem = source.elem_type if isinstance(source, Handle) else Any
@@ -249,6 +256,7 @@ class Flow:
             out.add(tid)
 
         if isinstance(source, Handle):
+            self._edges.add((source.node, node))
             self._record(f"filter {node!r} <- {source.node!r}", _param0(pred), src_elem)
             source.subscribe(on_id=mint_dep, on_close=out.close)
         else:
@@ -265,8 +273,10 @@ class Flow:
         """A single barrier task that runs `fn(list_of_results)` once *all* of
         `source`'s tasks are terminal — over the survivors (skipped/failed deps are
         dropped from the list). The one place a barrier is intended."""
+        self._node_kind[node] = "reduce"
         out = Handle(self, node, kind="one", elem_type=_ret(fn))
         if isinstance(source, Handle):
+            self._edges.add((source.node, node))
             self._record(f"reduce {node!r} <- {source.node!r}",
                          _param0(fn), list[source.elem_type])
 
@@ -302,7 +312,9 @@ class Flow:
         runs per element). Use when the fan-out width isn't known until runtime."""
         if not isinstance(source, Handle):
             raise TypeError("expand needs an upstream handle as its source")
+        self._node_kind[node] = "expand"
         out = Handle(self, node, elem_type=_elem_of(_ret(fn)))
+        self._edges.add((source.node, node))
         self._record(f"expand {node!r} <- {source.node!r}", _param0(fn), source.elem_type)
         st = {"open": 0, "closed": False}
 
@@ -311,7 +323,9 @@ class Flow:
             def cb(result):
                 for e in fn(result):
                     cid = self._tid(node)
-                    self.tasks[cid] = Task(cid, node, (), None,
+                    # carry the upstream task id as a (pre-satisfied) dep so the
+                    # dashboard can trace item lineage across the fan-out
+                    self.tasks[cid] = Task(cid, node, (up_id,), None,
                                            state=DONE, result=e)
                     self.results[cid] = e
                     out.add(cid)
@@ -333,6 +347,10 @@ class Flow:
         given dependency task ids. For irregular graphs the templates don't cover."""
         node = node or id
         deps = tuple(deps)
+        self._node_kind.setdefault(node, "task")
+        for d in deps:
+            if d in self.tasks:
+                self._edges.add((self.tasks[d].node, node))
         async def run(results, deps=deps, fn=fn):
             args = [results[d] for d in deps]
             r = fn(*args)
@@ -367,6 +385,9 @@ class Flow:
             # a collection — a "many" handle, or a list/dict of handles passed as one
             # arg; separate scalar handle args are all-required (skip if any fails).
             gather = nested or any(h.kind == "many" for h in dep_handles)
+        self._node_kind.setdefault(node, "gather" if gather else "task")
+        for h in dep_handles:
+            self._edges.add((h.node, node))
         self._record_spawn(node, type_fn, args, kwargs)
         tid = self._tid(node)
         async def run(results, args=args, kwargs=kwargs, fn=fn):
@@ -453,6 +474,8 @@ class Flow:
         if check:
             self.check()
         self._start = time.time()
+        if self.runs_dir is not None:
+            self._flush_graph()
         self._gsem = asyncio.Semaphore(self.concurrency)
         self._node_sems = {n: asyncio.Semaphore(c)
                            for n, c in self._node_conc.items()}
@@ -528,7 +551,8 @@ class Flow:
             try:
                 if path is not None:
                     with _monitor(t.id, 1, path, parent=t.node,
-                                  meta={"node": t.node}, min_interval=0) as m:
+                                  meta={"node": t.node, "deps": list(t.deps)},
+                                  min_interval=0) as m:
                         tok = _task_monitor.set(m)
                         try:
                             r = await t.run(self.results)
@@ -582,6 +606,36 @@ class Flow:
         p = self.runs_dir / node / "_node.progress.json"
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps(data))
+
+    def _flush_graph(self):
+        """Persist the node-level topology (kinds + edges + topo rank) to
+        ``runs_dir/graph.json`` so the dashboard can draw the actual DAG — its
+        shape, direction, and per-node kind — not just a flat list of progress
+        files. Written once at run start; the topology is fixed by then."""
+        nodes = set(self._node_kind) | {t.node for t in self.tasks.values()}
+        adj = {n: set() for n in nodes}
+        indeg = {n: 0 for n in nodes}
+        for a, b in self._edges:
+            if a in nodes and b in nodes and b not in adj[a]:
+                adj[a].add(b)
+                indeg[b] += 1
+        rank = {n: 0 for n in nodes}                  # longest-path layering
+        left = dict(indeg)
+        q = deque(n for n in nodes if indeg[n] == 0)
+        while q:
+            n = q.popleft()
+            for m in adj[n]:
+                rank[m] = max(rank[m], rank[n] + 1)
+                left[m] -= 1
+                if left[m] == 0:
+                    q.append(m)
+        data = {"title": self.title,
+                "nodes": [{"name": n, "kind": self._node_kind.get(n, "task"),
+                           "rank": rank[n]}
+                          for n in sorted(nodes, key=lambda x: (rank[x], x))],
+                "edges": sorted(list(e) for e in self._edges)}
+        self.runs_dir.mkdir(parents=True, exist_ok=True)
+        (self.runs_dir / "graph.json").write_text(json.dumps(data))
 
 
 # --- calling convention for a unit-fn -------------------------------------- #

@@ -105,3 +105,14 @@ def read_monitors(root):
         except (json.JSONDecodeError, OSError):
             pass  # mid-write; the next poll picks it up
     return out
+
+
+def read_graph(root):
+    """Load the node-level topology the engine writes to ``root/graph.json``
+    (``{title, nodes:[{name,kind,rank}], edges:[[src,dst]]}``), or None if it
+    isn't there yet — the dashboard falls back to a flat table in that case."""
+    p = Path(root) / "graph.json"
+    try:
+        return json.loads(p.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None

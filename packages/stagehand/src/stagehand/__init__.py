@@ -3,7 +3,9 @@ experiment runs.
 
   monitor   — a file-backed `running/done/failed` + `done/total` primitive per unit
               of work; units link via `parent` into a tree.
-  dashboard — render that tree into one auto-refreshing HTML status page.
+  dashboard — render the run as one auto-refreshing HTML page: a mermaid DAG of
+              the nodes + a swimlane of per-item flow through them (falls back to a
+              flat status table when no `graph.json` topology is present).
   engine    — the DAG executor: declare work with `Flow.map`/`filter`/`reduce`/
               `expand`/`add` (+ `best_of` / `with_retry` node policies) and
               `await flow.run(stop_when=...)`. The scheduler streams results between
@@ -22,7 +24,7 @@ experiment runs.
   serve     — put status.html behind a Cloudflare quick tunnel (needs `cloudflared`).
 """
 from ._log import log, enable_logging
-from .monitor import monitor, mark, read_monitors, Monitor, SUFFIX
+from .monitor import monitor, mark, read_monitors, read_graph, Monitor, SUFFIX
 from .dashboard import render_dashboard, default_note, COLORS
 from .engine import (Flow, Handle, Task, RunState, FlowCheckError,
                      best_of, with_retry, current_monitor)
@@ -35,7 +37,7 @@ from . import checks
 
 __all__ = [
     "log", "enable_logging", "checks",
-    "monitor", "mark", "read_monitors", "Monitor", "SUFFIX",
+    "monitor", "mark", "read_monitors", "read_graph", "Monitor", "SUFFIX",
     "render_dashboard", "default_note", "COLORS",
     "Flow", "Handle", "Task", "RunState", "FlowCheckError", "best_of", "with_retry",
     "current_monitor",

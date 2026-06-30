@@ -5,7 +5,7 @@ import asyncio
 import json
 
 from stagehand import Flow, best_of, with_retry
-from stagehand.monitor import read_monitors
+from stagehand.monitor import read_monitors, read_graph
 
 
 async def ident(x):
@@ -197,6 +197,27 @@ def test_writes_node_and_task_monitor_files(tmp_path):
     assert "train/0" in mons and "train/1" in mons          # per-task
     node = mons["train"]                                     # node group
     assert node["state"] == "done" and node["total"] == 2 and node["done"] == 2
+
+
+def test_writes_graph_topology_and_task_deps(tmp_path):
+    async def fn(i):
+        return i
+    flow = Flow(tmp_path, title="x")
+    trained = flow.map("train", range(2), fn)
+    gated = flow.filter("gate", trained, lambda i: True)
+    flow.reduce("pick", gated, lambda xs: xs)
+    asyncio.run(flow.run())
+
+    graph = read_graph(tmp_path)
+    kinds = {n["name"]: n["kind"] for n in graph["nodes"]}
+    ranks = {n["name"]: n["rank"] for n in graph["nodes"]}
+    assert kinds == {"train": "map", "gate": "filter", "pick": "reduce"}
+    assert ranks["train"] < ranks["gate"] < ranks["pick"]    # topo order
+    assert ["train", "gate"] in graph["edges"] and ["gate", "pick"] in graph["edges"]
+
+    # per-task deps are persisted so the dashboard can trace lineage
+    mons = {m["name"]: m for m in read_monitors(tmp_path)}
+    assert mons["gate/0"]["meta"]["deps"] == ["train/0"]
 
 
 def test_filtered_task_marked_failed_on_dashboard(tmp_path):
