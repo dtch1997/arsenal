@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>stagehand — orchestrate &amp; monitor experiment sweeps</title>
-<meta name="description" content="A tiny Python library: a file-backed progress monitor, a live HTML dashboard, and a staged async pipeline with gates — the primitives for running experiment sweeps.">
+<title>stagehand — a declarative engine for orchestrating steps at scale</title>
+<meta name="description" content="A tiny Python library: a declarative DAG engine that streams steps with fan-out/retry, type-checked graphs, coding-agent steps, and a live HTML dashboard. Pure stdlib.">
 <style>
   :root {
     color-scheme: light dark;
@@ -127,12 +127,13 @@
 
   <header>
     <h1 class="brand mono">stagehand</h1>
-    <p class="tagline">Orchestrate &amp; monitor experiment sweeps.</p>
+    <p class="tagline">A declarative engine for orchestrating steps at scale.</p>
     <p class="lede">
-      A tiny Python library for the unglamorous half of running experiments:
-      <b>knowing what's running, what finished, and what died</b> — and not kicking off the
-      expensive stage until the cheap one passed its checks. Pure standard library, no
-      framework to adopt. Drop it into a sweep and watch the whole thing in your browser.
+      Declare <b>what</b> work needs doing and how the pieces depend on each other; the
+      engine figures out <b>how</b> — streaming results between steps, fanning out,
+      retrying, and stopping early — and renders the whole thing as one live page. A step
+      is just an async function, so the same engine drives an experiment sweep, a fleet of
+      coding agents, or a data pipeline. Pure standard library, no framework to adopt.
     </p>
     <div class="btns">
       <a class="btn primary" href="https://github.com/dtch1997/stagehand">GitHub →</a>
@@ -220,6 +221,50 @@ evals = flow.map(<span class="s">"eval"</span>, ckpts, eval_one)</pre>
   </section>
 
   <section>
+    <h2>Compile the graph</h2>
+    <p>
+      Steps declare their I/O with plain type hints. <span class="mono">flow.check()</span> reads them
+      and verifies the graph can run start to end — every dependency exists, no cycles, and each
+      edge's producer type fits the consumer — <i>before</i> you spend any compute.
+    </p>
+<pre><span class="k">async def</span> train(cfg: Config) -&gt; Model: ...
+<span class="k">async def</span> evaluate(m: Model) -&gt; Eval: ...
+
+flow.check()                 <span class="c"># raises on a malformed / ill-typed graph</span>
+<span class="k">await</span> flow.run(check=<span class="s">True</span>)   <span class="c"># check first, then run</span>
+
+<span class="c"># flow check failed:</span>
+<span class="c">#   - map 'eval' &lt;- 'train': expects str, got Model</span></pre>
+    <p class="muted">
+      <span class="mono">Handle[T]</span> is generic, so <span class="mono">.result</span> is typed in your editor.
+      Gradual and pragmatic — unannotated is <span class="mono">Any</span>, subclasses / <span class="mono">list[T]</span> /
+      <span class="mono">Optional</span> are handled. A linter, not a type system.
+    </p>
+  </section>
+
+  <section>
+    <h2>Coding agents as steps</h2>
+    <p>
+      An agent is just a step. <span class="mono">agent(prompt, …)</span> spawns a headless coding agent
+      and returns a structured <span class="mono">AgentOutcome</span>, so it composes with everything —
+      <span class="mono">fanout</span> for best-of-N agents (judge picks the best patch),
+      <span class="mono">retry</span> for retry-with-feedback, <span class="mono">reduce</span> to merge.
+    </p>
+<pre><span class="k">with</span> flow(<span class="s">"runs"</span>, concurrency=<span class="s">4</span>):
+    patch = agent(<span class="s">"fix the failing test in foo.py"</span>, isolation=<span class="s">"worktree"</span>)
+    best  = fanout(solve_agent, <span class="s">"implement #42"</span>, n=<span class="s">4</span>, judge=pick_best)  <span class="c"># best-of-N agents</span>
+    <span class="k">await</span> run()
+<span class="nb">print</span>(patch.result.diff)</pre>
+    <p class="muted">
+      <span class="mono">isolation="worktree"</span> runs each agent in its own throwaway git worktree and
+      captures the diff. Backends sit behind a seam so the core stays dependency-free:
+      <span class="mono">subprocess_backend</span> (zero-dep <span class="mono">claude -p</span>) by default, or the
+      recommended <span class="mono">flightdeck_backend()</span> for live stream capture to the dashboard
+      (<span class="mono">flightdeck</span> imported lazily — an optional integration, not a dependency).
+    </p>
+  </section>
+
+  <section>
     <h2>What you watch</h2>
     <p class="muted">
       Every unit of work writes a small JSON file as it runs; the dashboard reads that tree
@@ -260,6 +305,10 @@ evals = flow.map(<span class="s">"eval"</span>, ckpts, eval_one)</pre>
       <div class="layer">
         <h3><code>dsl</code></h3>
         <p>Imperative-reading surface: <span class="mono">with flow(…)</span> + <span class="mono">do</span> / <span class="mono">fanout</span> / <span class="mono">retry</span> / <span class="mono">run</span>. Straight-line code that builds the same DAG — lazy handles, deps inferred from the handles you pass.</p>
+      </div>
+      <div class="layer">
+        <h3><code>agents</code></h3>
+        <p>Coding agents as steps: <span class="mono">agent(prompt, …)</span> → <span class="mono">AgentOutcome</span>, with worktree isolation. Backend seam — zero-dep <span class="mono">subprocess_backend</span> or the recommended lazy <span class="mono">flightdeck_backend()</span>. Composes with fanout / retry.</p>
       </div>
       <div class="layer">
         <h3><code>pipeline</code></h3>
