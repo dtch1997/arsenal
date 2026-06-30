@@ -222,12 +222,17 @@ good = flow.filter("gate", trained, healthy)     # drop diverged / no-checkpoint
 Kernel: `produced` · `exists` · `json_has` · `valid_image` · `finite` · `in_range` ·
 `exit_ok` · `tests_pass` · `uri_exists` (the last two shell out to pytest / gcloud).
 
-The [`cookbook/`](cookbook/) collects **reliability recipes** per step type — each
-decomposes into *body + criterion + reliability pattern* and uses **seams** (a
-compute backend, a storage sink) you swap for your real stack:
-- [`cookbook/train_and_persist.py`](cookbook/train_and_persist.py) — run a job →
-  validate → persist the artifact → record a pointer; idempotent reruns. (Coding-agent
-  and figures/report recipes are next.)
+The [`cookbook/`](cookbook/) collects **reliability recipes**. Abstractly there are
+only **two kinds of step** — both "produce → validate → persist a versioned artifact":
+- [`cookbook/run_step.py`](cookbook/run_step.py) — **run**: execute the code → validate
+  the artifact (`exit_ok &` your check) → persist it + record a pointer; idempotent. One
+  recipe for training / eval / plots / reports (the artifact check is a parameter).
+- [`cookbook/implementation_step.py`](cookbook/implementation_step.py) — **implement**:
+  an agent builds a feature, a **review** gates it, it retries with the review's findings
+  ≤ N times, and the approved change is PR'd.
+
+Both use **seams** (compute backend, storage sink, coding agent, review, `gh`) you swap
+for your real stack, and compose into the loop: implement → run.
 
 ## Examples
 
