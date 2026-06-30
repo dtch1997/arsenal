@@ -206,6 +206,29 @@ WARNING stagehand: ✗ train/2 failed: ValueError('diverged')
 INFO stagehand: flow 'sweep' done in 4.2s — 4 ok, 1 failed, 1 skipped
 ```
 
+## Checks & the cookbook
+
+A step's *body* does the work; a **check** says whether it actually succeeded.
+`stagehand.checks` is a small library of reusable correctness predicates — each
+returns a `(ok, issues)` result that composes with `&` / `|` / `~`, so it drops
+straight into `filter` / `with_retry(check=…)`:
+
+```python
+from stagehand.checks import produced, finite, exit_ok
+healthy = lambda r: exit_ok(r["exit"]) & produced(r["ckpt"]) & finite(r["loss"])
+good = flow.filter("gate", trained, healthy)     # drop diverged / no-checkpoint cells
+```
+
+Kernel: `produced` · `exists` · `json_has` · `valid_image` · `finite` · `in_range` ·
+`exit_ok` · `tests_pass` · `uri_exists` (the last two shell out to pytest / gcloud).
+
+The [`cookbook/`](cookbook/) collects **reliability recipes** per step type — each
+decomposes into *body + criterion + reliability pattern* and uses **seams** (a
+compute backend, a storage sink) you swap for your real stack:
+- [`cookbook/train_and_persist.py`](cookbook/train_and_persist.py) — run a job →
+  validate → persist the artifact → record a pointer; idempotent reruns. (Coding-agent
+  and figures/report recipes are next.)
+
 ## Examples
 
 Runnable with faked compute, so they go anywhere in a couple of seconds:

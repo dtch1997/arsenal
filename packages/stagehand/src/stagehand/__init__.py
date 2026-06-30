@@ -14,6 +14,9 @@ experiment runs.
   agents    — coding-agent instances as steps: `agent(prompt, …)` -> AgentOutcome,
               behind a backend seam (zero-dep `subprocess_backend`, or the
               recommended lazy `flightdeck_backend()`); composes with fanout/retry.
+  checks    — reusable correctness predicates (`produced`/`finite`/`exit_ok`/
+              `tests_pass`/`valid_image`/…) returning a composable `(ok, issues)`
+              gate result; the per-step-type recipes in `cookbook/` build on them.
   pipeline  — `live_dashboard` (serve the live graph) + `headless_handoff` (hand a
               finished run to a non-interactive `claude -p`).
   serve     — put status.html behind a Cloudflare quick tunnel (needs `cloudflared`).
@@ -28,9 +31,10 @@ from .agents import (agent, AgentOutcome, AgentSpec, subprocess_backend,
                      flightdeck_backend, set_default_backend, DEFAULT_TOOLS)
 from .pipeline import live_dashboard, headless_handoff
 from .serve import serve, parse_tunnel_url
+from . import checks
 
 __all__ = [
-    "log", "enable_logging",
+    "log", "enable_logging", "checks",
     "monitor", "mark", "read_monitors", "Monitor", "SUFFIX",
     "render_dashboard", "default_note", "COLORS",
     "Flow", "Handle", "Task", "RunState", "FlowCheckError", "best_of", "with_retry",
