@@ -32,12 +32,26 @@ import inspect
 import json
 import time
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import (Any, Generic, TypeVar, Union,
                     get_args, get_origin, get_type_hints)
 
 from .monitor import monitor as _monitor, mark
+
+# The monitor of the task currently running on this asyncio task — lets a step
+# stream its own live progress (e.g. an agent's action/tokens) to the dashboard
+# via `current_monitor()` without threading the monitor through every fn.
+_task_monitor: ContextVar = ContextVar("stagehand_task_monitor", default=None)
+
+
+def current_monitor():
+    """The running task's `Monitor` (or None if the flow has no `runs_dir`).
+
+    Call `current_monitor().set(**fields)` inside a step to push live progress to
+    the dashboard — used by agent steps to surface status/last-action/tokens."""
+    return _task_monitor.get()
 
 PENDING, RUNNING, DONE, FAILED, SKIPPED = (
     "pending", "running", "done", "failed", "skipped")
@@ -502,7 +516,11 @@ class Flow:
                 if path is not None:
                     with _monitor(t.id, 1, path, parent=t.node,
                                   meta={"node": t.node}, min_interval=0) as m:
-                        r = await t.run(self.results)
+                        tok = _task_monitor.set(m)
+                        try:
+                            r = await t.run(self.results)
+                        finally:
+                            _task_monitor.reset(tok)
                         m.update()
                 else:
                     r = await t.run(self.results)
