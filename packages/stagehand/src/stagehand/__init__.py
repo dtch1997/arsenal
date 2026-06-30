@@ -19,8 +19,8 @@ experiment runs.
   checks    — reusable correctness predicates (`produced`/`finite`/`exit_ok`/
               `tests_pass`/`valid_image`/…) returning a composable `(ok, issues)`
               gate result; the per-step-type recipes in `cookbook/` build on them.
-  pipeline  — `live_dashboard` (serve the live graph) + `headless_handoff` (hand a
-              finished run to a non-interactive `claude -p`).
+  live      — `live_dashboard`: poll a running flow's monitor tree and re-render
+              one auto-refreshing HTML status page until you're done.
   serve     — put status.html behind a Cloudflare quick tunnel (needs `cloudflared`).
 """
 from ._log import log, enable_logging
@@ -31,7 +31,7 @@ from .engine import (Flow, Handle, Task, RunState, FlowCheckError,
 from .dsl import flow, do, fanout, retry, each, run, current
 from .agents import (agent, AgentOutcome, AgentSpec, subprocess_backend,
                      flightdeck_backend, set_default_backend, DEFAULT_TOOLS)
-from .pipeline import live_dashboard, headless_handoff
+from .live import live_dashboard
 from .serve import serve, parse_tunnel_url
 from . import checks
 
@@ -44,6 +44,6 @@ __all__ = [
     "flow", "do", "fanout", "retry", "each", "run", "current",
     "agent", "AgentOutcome", "AgentSpec", "subprocess_backend",
     "flightdeck_backend", "set_default_backend", "DEFAULT_TOOLS",
-    "live_dashboard", "headless_handoff",
+    "live_dashboard",
     "serve", "parse_tunnel_url",
 ]

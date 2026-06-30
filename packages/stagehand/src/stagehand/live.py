@@ -1,13 +1,10 @@
-"""Live serving + handoff helpers for a running `Flow`.
+"""Serve a running `Flow`'s monitor tree as one live, auto-refreshing HTML page.
 
-`live_dashboard` polls the monitor tree a flow writes and re-renders one
-auto-refreshing HTML page until you're done; `headless_handoff` hands a finished
-run (e.g. its manifest) to a non-interactive ``claude -p``. The execution engine
-itself lives in `flow`.
+`live_dashboard` polls the monitor tree a flow writes and re-renders the page on
+an interval until you're done. The execution engine itself lives in `engine`.
 
     async with live_dashboard(flow.runs_dir, title="my sweep") as status_html:
         await flow.run()
-    await headless_handoff(prompt, cwd=repo)   # optional tail
 """
 from __future__ import annotations
 import asyncio
@@ -55,20 +52,3 @@ async def live_dashboard(runs_dir, *, title="stagehand", note_fn=default_note,
     finally:
         stop.set()
         await task
-
-
-async def headless_handoff(prompt, *, cwd=".",
-                           allowed_tools=("Workflow", "Bash", "Read", "Write", "Edit"),
-                           permission_mode="acceptEdits", claude_bin="claude"):
-    """Hand a finished run (e.g. its manifest) to a headless ``claude -p``.
-
-    Runs Claude non-interactively with `prompt` and the given tool allowlist, in
-    `cwd`. Returns the process exit code. The usual use is a one-shot "invoke the
-    Workflow tool on this manifest and report its summary" handoff after the
-    manifest is written.
-    """
-    proc = await asyncio.create_subprocess_exec(
-        claude_bin, "-p", prompt,
-        "--allowed-tools", ",".join(allowed_tools),
-        "--permission-mode", permission_mode, cwd=cwd)
-    return await proc.wait()

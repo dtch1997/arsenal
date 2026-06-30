@@ -69,11 +69,6 @@ async def main():
           f"{state.skipped} skipped")
     print(f"open {status_html} ; manifest at {runs_dir / 'manifest.json'}")
 
-    # Optional tail: hand the manifest to a headless Claude.
-    # from stagehand import headless_handoff
-    # await headless_handoff("Invoke Workflow on runs/manifest.json and summarize.",
-    #                        cwd=".")
-
 
 if __name__ == "__main__":
     asyncio.run(main())

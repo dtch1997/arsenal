@@ -5,7 +5,7 @@ description = "A declarative DAG engine for orchestrating steps at scale, with l
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
-# The core (monitor + dashboard + pipeline) is pure stdlib — no runtime deps. Keeping
+# The core (monitor + dashboard + engine) is pure stdlib — no runtime deps. Keeping
 # it dependency-free is deliberate: it drops into any experiment repo without dragging
 # a tree of transitive pins along with it.
 dependencies = []

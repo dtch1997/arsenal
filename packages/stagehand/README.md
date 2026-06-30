@@ -21,7 +21,7 @@ fleet of coding agents, a data pipeline, or an eval harness. The core is pure st
 | `engine`    | the **DAG engine**: declare with `Flow.map`/`filter`/`reduce`/`expand`/`add` (+ `best_of`/`with_retry` policies), `await flow.run(stop_when=…)`; streams between steps, fans out, exits early |
 | `dsl`       | an **imperative-reading surface**: `with flow(…)` + `do`/`fanout`/`retry` — lazy handles that read like straight-line code and compile to the DAG |
 | `agents`    | **coding agents as steps**: `agent(prompt, …)` → `AgentOutcome`, behind a backend seam (zero-dep `subprocess_backend`, or the recommended lazy `flightdeck_backend()`) |
-| `pipeline`  | `live_dashboard` (serve the live graph) + `headless_handoff` (hand a finished run to a non-interactive `claude -p`) |
+| `live`      | `live_dashboard` — poll a running flow's monitor tree and re-render one auto-refreshing HTML status page |
 | `serve`     | put `status.html` behind a Cloudflare quick tunnel for a public live link (needs the `cloudflared` binary) |
 
 ```bash
