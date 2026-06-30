@@ -12,7 +12,7 @@ Three layers, each usable on its own and pure stdlib (zero runtime deps):
 |-------|-------------------|
 | `monitor`   | a file-backed `running/done/failed` + `done/total` ticker per unit of work; units link via `parent` into a tree |
 | `dashboard` | render that tree into one auto-refreshing HTML status page |
-| `pipeline`  | the **staircase**: `stage` (barrier) → `gate` (drop the dead) → next stage, plus a `live_dashboard` context and a `headless_handoff` tail |
+| `pipeline`  | the **staircase**: `stage` (barrier) → `gate` (drop the dead) → next stage, with `best_of` (fan out N, keep the best) and `with_retry` (retry with feedback) combinators, plus a `live_dashboard` context and a `headless_handoff` tail |
 | `serve`     | put `status.html` behind a Cloudflare quick tunnel for a public live link (needs the `cloudflared` binary) |
 
 ```bash
@@ -80,8 +80,29 @@ async with live_dashboard("runs", title="my sweep") as status_html:
 
 - `stage(units, fn, concurrency=N)` — run `fn(unit)` for every unit, at most `N` at once, then gather (the barrier). Results stay in unit order; if `fn` raises despite catching its own errors, the exception is returned *in place* of that unit rather than cancelling the batch.
 - `gate(results, predicate, monitor_path=None)` — partition by `predicate(result) -> (ok, issues)` into `(passed, failed)`; mark each failed unit's monitor `failed` (so it shows red on the dashboard).
+- `best_of(fn, n, judge=... | score=..., monitor_path=None)` — **fan out**: wrap `fn` so each unit runs `n` independent attempts and keeps the best. Pick the winner with an async-or-sync `judge(results) -> index` or an objective `score(result) -> float`; losing attempts get marked `failed` ("not selected") on the dashboard.
+- `with_retry(fn, check=..., max_attempts=3, feedback=None, monitor_path=None)` — **retry with feedback**: wrap `fn` so a unit that flunks `check(result) -> (ok, issues)` (or raises) is re-run with the previous try's feedback fed back in, until it passes or attempts run out. Superseded attempts get marked `failed` ("superseded") on the dashboard.
 - `live_dashboard(runs_dir, ...)` — async context manager that polls the tree into `status.html` until the body exits, with a final terminal-state render. Yields the HTML path — serve it however you like (static server + tunnel).
 - `headless_handoff(prompt, cwd=..., allowed_tools=..., ...)` — hand the finished manifest to a non-interactive `claude -p`; returns the exit code.
+
+`best_of` and `with_retry` are per-unit **combinators** — they return a unit-fn you drop straight into `stage`, so they compose with everything above:
+
+```python
+from stagehand import stage, best_of, with_retry
+
+# fan out 4 attempts per unit, keep the highest reward; mark the losers red
+winners = await stage(units, best_of(solve, n=4, score=lambda r: r["reward"],
+                                     monitor_path=lambda r: r["dir"] / "p.progress.json"),
+                      concurrency=2)
+
+# retry each unit (sequentially, with feedback) until it parses; fan units out across stage
+fixed = await stage(units, with_retry(solve, check=parses, max_attempts=3),
+                    concurrency=8)
+```
+
+Each attempt is called as `fn(unit, attempt=i, feedback=fb)` — your `fn` opts into the extra
+context by accepting those keywords (use `attempt` to vary a seed so the tries differ); a plain
+`fn(unit)` still works unchanged. Nest them too — `best_of(with_retry(fn, ...), n=4, ...)`.
 
 See [`examples/sweep.py`](examples/sweep.py) for the whole staircase wired end-to-end
 (with the compute faked, so it runs anywhere in a couple of seconds) — the copy-paste

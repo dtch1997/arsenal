@@ -171,6 +171,26 @@
   </section>
 
   <section>
+    <h2>Fan out, then retry</h2>
+    <p>
+      Two per-unit <b>combinators</b> wrap a unit-fn and drop straight into <span class="mono">stage</span>:
+      <span class="mono">best_of</span> runs N independent attempts of a unit and keeps the best
+      (by an objective <span class="mono">score</span> or an async <span class="mono">judge</span>);
+      <span class="mono">with_retry</span> re-runs a unit that flunks its <span class="mono">check</span>
+      — or raises — feeding the previous try's feedback back in until it passes. Losing
+      attempts and superseded retries go red on the dashboard, so the whole fan-out is visible.
+    </p>
+<pre><span class="c"># fan out 4 attempts per unit, keep the highest reward, mark the losers red</span>
+winners = <span class="k">await</span> stage(units, best_of(solve, n=<span class="s">4</span>, score=<span class="k">lambda</span> r: r[<span class="s">"reward"</span>]), concurrency=<span class="s">2</span>)
+
+<span class="c"># retry each unit (sequentially, with feedback) until it parses</span>
+fixed = <span class="k">await</span> stage(units, with_retry(solve, check=parses, max_attempts=<span class="s">3</span>), concurrency=<span class="s">8</span>)
+
+<span class="c"># each try is solve(unit, attempt=i, feedback=fb) — opt in by accepting those kwargs;</span>
+<span class="c"># a plain solve(unit) still works, and they nest: best_of(with_retry(solve, ...), n=4, ...)</span></pre>
+  </section>
+
+  <section>
     <h2>What you watch</h2>
     <p class="muted">
       Every unit of work writes a small JSON file as it runs; the dashboard reads that tree
@@ -206,7 +226,7 @@
       </div>
       <div class="layer">
         <h3><code>pipeline</code></h3>
-        <p>The staircase: <span class="mono">stage</span> (a semaphore-bounded barrier) → <span class="mono">gate</span> (drop the dead, mark them red) → next stage. Plus a live-dashboard context and a headless-Claude handoff.</p>
+        <p>The staircase: <span class="mono">stage</span> (a semaphore-bounded barrier) → <span class="mono">gate</span> (drop the dead, mark them red) → next stage. Plus <span class="mono">best_of</span> (fan out N, keep the best) and <span class="mono">with_retry</span> (retry with feedback) combinators, a live-dashboard context, and a headless-Claude handoff.</p>
       </div>
       <div class="layer">
         <h3><code>serve</code></h3>

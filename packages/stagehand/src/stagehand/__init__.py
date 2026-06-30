@@ -6,17 +6,20 @@ Three layers, each usable on its own:
               of work; units link via `parent` into a tree.
   dashboard — render that tree into one auto-refreshing HTML status page.
   pipeline  — the staircase: `stage` (barrier) -> `gate` (drop the dead) -> next
-              stage, with a `live_dashboard` context and a `headless_handoff` tail.
+              stage, with `best_of` (fan out N attempts, keep the best) and
+              `with_retry` (retry with feedback) as per-unit combinators, plus a
+              `live_dashboard` context and a `headless_handoff` tail.
   serve     — put status.html behind a Cloudflare quick tunnel (needs `cloudflared`).
 """
 from .monitor import monitor, mark, read_monitors, Monitor, SUFFIX
 from .dashboard import render_dashboard, default_note, COLORS
-from .pipeline import stage, gate, live_dashboard, headless_handoff
+from .pipeline import (stage, gate, best_of, with_retry, live_dashboard,
+                       headless_handoff)
 from .serve import serve, parse_tunnel_url
 
 __all__ = [
     "monitor", "mark", "read_monitors", "Monitor", "SUFFIX",
     "render_dashboard", "default_note", "COLORS",
-    "stage", "gate", "live_dashboard", "headless_handoff",
+    "stage", "gate", "best_of", "with_retry", "live_dashboard", "headless_handoff",
     "serve", "parse_tunnel_url",
 ]
