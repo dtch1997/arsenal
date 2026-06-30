@@ -153,41 +153,70 @@
   </header>
 
   <section>
-    <h2>The staircase</h2>
+    <h2>Declare the DAG; the engine runs it</h2>
     <p>
-      A sweep is a sequence of <b>stages</b>, each followed by a <b>gate</b> that drops
-      unhealthy units before the next stage spends real compute. Barriers between stages —
-      because a gate needs the whole previous stage before it can decide what survives.
+      You declare <b>what</b> work needs doing and how the pieces depend on each other; the
+      engine figures out <b>how</b> to run it. A node like <span class="mono">map</span> stamps out
+      one task per item and wires its dependencies, so the scheduler runs everything that's
+      <i>ready</i> — <span class="mono">eval(cell_0)</span> starts the moment
+      <span class="mono">train(cell_0)</span> finishes, while <span class="mono">train(cell_2)</span> is
+      still going. No barriers except where a node needs its whole upstream collection — that's
+      <span class="mono">reduce</span>.
     </p>
-<pre><span class="k">async with</span> live_dashboard(<span class="s">"runs"</span>, title=<span class="s">"my sweep"</span>):
-    trained = <span class="k">await</span> stage(cells, train_one, concurrency=<span class="s">4</span>)        <span class="c"># barrier</span>
-    healthy, failed = gate(trained, gate_train,                  <span class="c"># drop the dead</span>
-                           monitor_path=<span class="k">lambda</span> r: r[<span class="s">"dir"</span>] / <span class="s">"train.progress.json"</span>)
+<pre>flow = Flow(<span class="s">"runs"</span>, title=<span class="s">"my sweep"</span>, concurrency=<span class="s">8</span>)
+trained = flow.map(<span class="s">"train"</span>, cells, train_one)            <span class="c"># one task per cell</span>
+healthy = flow.filter(<span class="s">"gate"</span>, trained, is_healthy)       <span class="c"># survivors stream on</span>
+evals   = flow.map(<span class="s">"eval"</span>, healthy, eval_one)            <span class="c"># eval_i waits on train_i only</span>
+best    = flow.reduce(<span class="s">"pick"</span>, evals, choose_best)        <span class="c"># the *only* barrier</span>
 
-    evals = <span class="k">await</span> stage(healthy, eval_one, concurrency=<span class="s">8</span>)         <span class="c"># barrier</span>
-    write_manifest(healthy, failed, evals)
-
-    <span class="k">await</span> headless_handoff(<span class="s">"hand the manifest to a Workflow"</span>, cwd=repo)  <span class="c"># optional tail</span></pre>
+<span class="k">async with</span> live_dashboard(flow.runs_dir, title=<span class="s">"my sweep"</span>):
+    <span class="k">await</span> flow.run(stop_when=<span class="k">lambda</span> s: s.done &gt;= <span class="s">100</span>)   <span class="c"># early-exit optional</span></pre>
   </section>
 
   <section>
-    <h2>Fan out, then retry</h2>
+    <h2>Fan out, retry, expand</h2>
     <p>
-      Two per-unit <b>combinators</b> wrap a unit-fn and drop straight into <span class="mono">stage</span>:
-      <span class="mono">best_of</span> runs N independent attempts of a unit and keeps the best
-      (by an objective <span class="mono">score</span> or an async <span class="mono">judge</span>);
-      <span class="mono">with_retry</span> re-runs a unit that flunks its <span class="mono">check</span>
-      — or raises — feeding the previous try's feedback back in until it passes. Losing
-      attempts and superseded retries go red on the dashboard, so the whole fan-out is visible.
+      <span class="mono">best_of</span> and <span class="mono">with_retry</span> are <b>node policies</b> —
+      unit-fns you drop into <span class="mono">map</span>: <span class="mono">best_of</span> runs N attempts
+      per item and keeps the best (objective <span class="mono">score</span> or async
+      <span class="mono">judge</span>); <span class="mono">with_retry</span> re-runs an item that flunks its
+      <span class="mono">check</span> — or raises — feeding feedback back in until it passes.
+      <span class="mono">expand</span> handles <b>dynamic fan-out</b>: one upstream result becomes a
+      data-dependent number of downstream tasks.
     </p>
-<pre><span class="c"># fan out 4 attempts per unit, keep the highest reward, mark the losers red</span>
-winners = <span class="k">await</span> stage(units, best_of(solve, n=<span class="s">4</span>, score=<span class="k">lambda</span> r: r[<span class="s">"reward"</span>]), concurrency=<span class="s">2</span>)
+<pre><span class="c"># N attempts per item, keep the best — shows up as an ordinary node</span>
+best = flow.map(<span class="s">"solve"</span>, units, best_of(solve, n=<span class="s">4</span>, score=<span class="k">lambda</span> r: r[<span class="s">"reward"</span>]))
 
-<span class="c"># retry each unit (sequentially, with feedback) until it parses</span>
-fixed = <span class="k">await</span> stage(units, with_retry(solve, check=parses, max_attempts=<span class="s">3</span>), concurrency=<span class="s">8</span>)
+<span class="c"># retry each item with feedback until it parses</span>
+fixed = flow.map(<span class="s">"fix"</span>, units, with_retry(solve, check=parses, max_attempts=<span class="s">3</span>))
 
-<span class="c"># each try is solve(unit, attempt=i, feedback=fb) — opt in by accepting those kwargs;</span>
-<span class="c"># a plain solve(unit) still works, and they nest: best_of(with_retry(solve, ...), n=4, ...)</span></pre>
+<span class="c"># train emits K checkpoints (K unknown until runtime) -> eval each</span>
+ckpts = flow.expand(<span class="s">"ckpts"</span>, trained, <span class="k">lambda</span> r: r[<span class="s">"checkpoints"</span>])
+evals = flow.map(<span class="s">"eval"</span>, ckpts, eval_one)</pre>
+  </section>
+
+  <section>
+    <h2>Or write it as straight-line code</h2>
+    <p>
+      The <span class="mono">dsl</span> is the per-task surface — <span class="mono">do(fn, …)</span> is one task
+      and reads imperatively. It's lazy: <span class="mono">do</span> returns a placeholder <b>handle</b>,
+      nothing runs until <span class="mono">run()</span>, and dependencies are inferred from the handles you
+      pass. <span class="mono">fanout</span> and <span class="mono">retry</span> have the same shape;
+      <span class="mono">after=[…]</span> is an ordering-only dep — your <span class="mono">wait(A); do(B)</span>.
+    </p>
+<pre><span class="k">with</span> flow(<span class="s">"runs"</span>, concurrency=<span class="s">8</span>):
+    ckpt  = do(train, cell)                    <span class="c"># a task, no deps</span>
+    good  = do(check, ckpt)                    <span class="c"># handle arg ⇒ dependency</span>
+    best  = fanout(solve, good, n=<span class="s">4</span>, score=s)  <span class="c"># same shape as do</span>
+    fixed = retry(format, best, check=parses)  <span class="c"># same shape as do</span>
+    do(report, after=[fixed])                  <span class="c"># wait(A); do(B) — ordering only</span>
+    <span class="k">await</span> run(stop_when=<span class="k">lambda</span> s: s.done &gt;= <span class="s">100</span>)
+<span class="nb">print</span>(ckpt.result)                             <span class="c"># filled in after the run</span></pre>
+    <p class="muted">
+      A handle is a placeholder, so you can't <span class="mono">if</span> on its value while building —
+      put result-dependent control flow <i>inside</i> a node fn (a normal coroutine: plain
+      <span class="mono">await</span> / <span class="mono">if</span>; raise to prune).
+    </p>
   </section>
 
   <section>
@@ -214,7 +243,7 @@ fixed = <span class="k">await</span> stage(units, with_retry(solve, check=parses
   </section>
 
   <section>
-    <h2>Four layers, each usable on its own</h2>
+    <h2>Layers, each usable on its own</h2>
     <div class="layers">
       <div class="layer">
         <h3><code>monitor</code></h3>
@@ -225,8 +254,16 @@ fixed = <span class="k">await</span> stage(units, with_retry(solve, check=parses
         <p>Render that tree into one self-contained, auto-refreshing HTML page. Title and per-row note are injectable; everything else is automatic.</p>
       </div>
       <div class="layer">
+        <h3><code>engine</code></h3>
+        <p>The DAG engine. Declare with <span class="mono">map</span> / <span class="mono">filter</span> / <span class="mono">reduce</span> / <span class="mono">expand</span> / <span class="mono">add</span>, add <span class="mono">best_of</span> / <span class="mono">with_retry</span> node policies, then <span class="mono">await flow.run(stop_when=…)</span>. Streams between nodes, fans out dynamically, exits early on a criterion.</p>
+      </div>
+      <div class="layer">
+        <h3><code>dsl</code></h3>
+        <p>Imperative-reading surface: <span class="mono">with flow(…)</span> + <span class="mono">do</span> / <span class="mono">fanout</span> / <span class="mono">retry</span> / <span class="mono">run</span>. Straight-line code that builds the same DAG — lazy handles, deps inferred from the handles you pass.</p>
+      </div>
+      <div class="layer">
         <h3><code>pipeline</code></h3>
-        <p>The staircase: <span class="mono">stage</span> (a semaphore-bounded barrier) → <span class="mono">gate</span> (drop the dead, mark them red) → next stage. Plus <span class="mono">best_of</span> (fan out N, keep the best) and <span class="mono">with_retry</span> (retry with feedback) combinators, a live-dashboard context, and a headless-Claude handoff.</p>
+        <p><span class="mono">live_dashboard</span> — poll the graph's monitor tree into one auto-refreshing page while it runs — plus <span class="mono">headless_handoff</span> to hand a finished run to a non-interactive <span class="mono">claude -p</span>.</p>
       </div>
       <div class="layer">
         <h3><code>serve</code></h3>
@@ -242,8 +279,8 @@ uv add git+https://github.com/dtch1997/stagehand
 
 <span class="c"># or clone and run the worked example (fake compute, no network)</span>
 git clone https://github.com/dtch1997/stagehand &amp;&amp; cd stagehand
-make example     <span class="c"># runs the staircase → writes runs/status.html</span>
-make test        <span class="c"># 20 unit tests</span></pre>
+make example     <span class="c"># runs the worked sweep → writes runs/status.html</span>
+make test        <span class="c"># unit tests</span></pre>
     <p class="muted" style="margin-top:1rem">
       The single primitive underneath it all:
     </p>

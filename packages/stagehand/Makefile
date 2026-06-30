@@ -6,5 +6,5 @@ setup:           ## sync the env (incl. dev deps) from pyproject
 test:            ## run the unit tests
 	uv run python -m pytest -q
 
-example:         ## run the worked staircase (fake compute), writes runs/status.html
+example:         ## run the worked sweep (fake compute), writes runs/status.html
 	uv run python examples/sweep.py

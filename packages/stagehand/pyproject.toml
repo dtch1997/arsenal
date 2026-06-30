@@ -1,7 +1,7 @@
 [project]
 name = "stagehand"
-version = "0.1.0"
-description = "Primitives + patterns for orchestrating and monitoring experiment sweeps: a file-backed progress monitor, a live HTML dashboard, and a staged async pipeline with gates."
+version = "1.0.0"
+description = "A declarative DAG engine for orchestrating and monitoring work at scale: a file-backed progress monitor, a live HTML dashboard, a streaming per-task scheduler with fan-out/retry policies, and an imperative-reading DSL."
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
