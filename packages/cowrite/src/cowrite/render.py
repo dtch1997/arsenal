@@ -69,6 +69,10 @@ button.save { font: inherit; font-weight: 600; cursor: pointer; color: #fff;
   background: #1f883d; border: 1px solid rgba(31,35,40,.15); border-radius: 6px; padding: .35rem .8rem; }
 button.save:hover { background: #1a7f37; }
 button.save:disabled { background: #94d3a2; cursor: default; }
+button.revert { font: inherit; font-weight: 600; cursor: pointer; color: #1f2328;
+  background: #f6f8fa; border: 1px solid rgba(31,35,40,.15); border-radius: 6px; padding: .35rem .8rem; }
+button.revert:hover { background: #eef1f4; }
+button.revert:disabled { opacity: .55; cursor: default; }
 .split { flex: 1 1 auto; display: flex; min-height: 0; }
 .pane { min-width: 0; overflow: auto; }
 .pane.edit { flex: 0 0 var(--edit-width, 50%); border-right: 1px solid #d0d7de; display: flex; }
@@ -89,6 +93,8 @@ textarea { flex: 1 1 auto; width: 100%; border: 0; outline: none; resize: none;
   body { color: #e6edf3; background: #0d1117; }
   header { background: #161b22; border-color: #30363d; }
   header .path, header .status { color: #8b949e; }
+  button.revert { color: #e6edf3; background: #21262d; border-color: #30363d; }
+  button.revert:hover { background: #30363d; }
   textarea { color: #e6edf3; background: #0d1117; }
   .pane.edit { border-color: #30363d; } .pane.view { background: #0d1117; }
   .gutter { background: #30363d; } .gutter:hover, .gutter.dragging { background: #4493f8; }
@@ -117,6 +123,7 @@ _PAGE = """<!DOCTYPE html>
   <span class="spacer"></span>
   <span class="hint">⌘/Ctrl+S to save &amp; render</span>
   <span class="status" id="status">loaded</span>
+  <button class="revert" id="revert" title="Discard changes and restore the last committed (git HEAD) version">Revert to last commit</button>
   <button class="save" id="save">Save</button>
 </header>
 <div class="split">
@@ -129,11 +136,17 @@ const src = document.getElementById('src');
 const preview = document.getElementById('preview');
 const status = document.getElementById('status');
 const saveBtn = document.getElementById('save');
+const revertBtn = document.getElementById('revert');
 let clean = src.value;          // last-saved content
 let saving = false;
 
 function setStatus(text, cls) { status.textContent = text; status.className = 'status' + (cls ? ' ' + cls : ''); }
 function markDirty() { if (src.value !== clean) setStatus('● unsaved', 'dirty'); else setStatus('saved', 'saved'); }
+
+function applyRendered(data) {
+  preview.innerHTML = data.html;
+  if (window.MathJax && MathJax.typesetPromise) { MathJax.typesetClear && MathJax.typesetClear([preview]); MathJax.typesetPromise([preview]); }
+}
 
 async function save() {
   if (saving || src.value === clean) { return; }
@@ -142,8 +155,7 @@ async function save() {
     const r = await fetch('/save', { method: 'POST', headers: { 'Content-Type': 'text/plain; charset=utf-8' }, body: src.value });
     const data = await r.json();
     if (!r.ok || !data.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
-    preview.innerHTML = data.html;
-    if (window.MathJax && MathJax.typesetPromise) { MathJax.typesetClear && MathJax.typesetClear([preview]); MathJax.typesetPromise([preview]); }
+    applyRendered(data);
     clean = data.saved;
     setStatus('✓ saved ' + data.at, 'saved');
   } catch (e) {
@@ -153,8 +165,30 @@ async function save() {
   }
 }
 
+async function revert() {
+  if (saving) { return; }
+  const dirty = src.value !== clean;
+  if (!confirm('Restore this draft to its last committed (git HEAD) version?' +
+               (dirty ? '\n\nUnsaved changes in the editor will be discarded.' : ''))) { return; }
+  saving = true; saveBtn.disabled = true; revertBtn.disabled = true; setStatus('reverting…');
+  try {
+    const r = await fetch('/revert', { method: 'POST' });
+    const data = await r.json();
+    if (!r.ok || !data.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
+    src.value = data.saved;
+    applyRendered(data);
+    clean = data.saved;
+    setStatus('↩ reverted ' + data.at, 'saved');
+  } catch (e) {
+    setStatus('✗ ' + e.message, 'err');
+  } finally {
+    saving = false; saveBtn.disabled = false; revertBtn.disabled = false;
+  }
+}
+
 src.addEventListener('input', markDirty);
 saveBtn.addEventListener('click', save);
+revertBtn.addEventListener('click', revert);
 document.addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') { e.preventDefault(); save(); }
 });

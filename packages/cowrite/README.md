@@ -14,6 +14,12 @@ right.
 The editor is served over a [Cloudflare quick tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/),
 so it works even when the draft lives on a remote box. 
 
+A **Revert to last commit** button restores the draft to its last-committed
+(`git HEAD`) version — handy when a round of edits went the wrong way. It asks
+for confirmation (warning if you have unsaved changes), writes the committed
+text back to disk atomically, and re-renders. It's a no-op error if the draft
+isn't tracked in a git repo.
+
 ## Install
 
 ```bash
@@ -46,6 +52,8 @@ port + URL, so several drafts can be open at once.
 - **The round-trip** is a small custom HTTP handler: `GET /` serves the editor,
   `POST /save` does an *atomic* write-back (temp file + `os.replace`, so a save
   can never truncate the draft midway) and returns freshly rendered HTML.
+  `POST /revert` reads the committed version via `git show HEAD:<path>` and
+  writes it back the same atomic way.
 - **Figures / assets** referenced relatively (`![](fig.png)`, `![](plots/x.png)`)
   are served from the draft's own directory, so the preview shows them exactly
   as they'll appear. Path traversal outside that directory is blocked.
