@@ -21,6 +21,10 @@ experiment runs.
               gate result; the per-step-type recipes in `cookbook/` build on them.
   live      — `live_dashboard`: poll a running flow's monitor tree and re-render
               one auto-refreshing HTML status page until you're done.
+  artifacts — content-addressed inputs/outputs with lineage: `ArtifactStore`
+              persists files/dirs/secrets by content hash (records `inputs` +
+              `produced_by`), behind a backend seam (zero-dep `local_backend`, or
+              the default lazy `cloudfs_backend()`).
   serve     — put status.html behind a Cloudflare quick tunnel (needs `cloudflared`).
 """
 from ._log import log, enable_logging
@@ -32,6 +36,8 @@ from .dsl import flow, do, fanout, retry, each, run, current
 from .agents import (agent, AgentOutcome, AgentSpec, subprocess_backend,
                      flightdeck_backend, set_default_backend, DEFAULT_TOOLS)
 from .live import live_dashboard
+from .artifacts import (Artifact, ArtifactStore, local_backend, cloudfs_backend,
+                        set_default_artifact_backend)
 from .serve import serve, parse_tunnel_url
 from . import checks
 
@@ -45,5 +51,7 @@ __all__ = [
     "agent", "AgentOutcome", "AgentSpec", "subprocess_backend",
     "flightdeck_backend", "set_default_backend", "DEFAULT_TOOLS",
     "live_dashboard",
+    "Artifact", "ArtifactStore", "local_backend", "cloudfs_backend",
+    "set_default_artifact_backend",
     "serve", "parse_tunnel_url",
 ]

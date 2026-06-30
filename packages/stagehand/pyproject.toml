@@ -1,7 +1,7 @@
 [project]
 name = "stagehand"
-version = "1.3.0"
-description = "A declarative DAG engine for orchestrating steps at scale, with live monitoring: a file-backed progress monitor, a live HTML dashboard, a streaming per-task scheduler with fan-out/retry policies, type-checked graphs, coding-agent steps, and an imperative-reading DSL."
+version = "1.4.0"
+description = "A declarative DAG engine for orchestrating steps at scale, with live monitoring: a file-backed progress monitor, a live HTML dashboard, a streaming per-task scheduler with fan-out/retry policies, type-checked graphs, coding-agent steps, content-addressed artifacts with lineage, and an imperative-reading DSL."
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"

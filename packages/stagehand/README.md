@@ -22,6 +22,7 @@ fleet of coding agents, a data pipeline, or an eval harness. The core is pure st
 | `dsl`       | an **imperative-reading surface**: `with flow(…)` + `do`/`fanout`/`retry` — lazy handles that read like straight-line code and compile to the DAG |
 | `agents`    | **coding agents as steps**: `agent(prompt, …)` → `AgentOutcome`, behind a backend seam (zero-dep `subprocess_backend`, or the recommended lazy `flightdeck_backend()`) |
 | `live`      | `live_dashboard` — poll a running flow's monitor tree and re-render one auto-refreshing HTML status page |
+| `artifacts` | **content-addressed inputs/outputs with lineage**: `ArtifactStore` persists files/dirs/secrets by content hash and tracks `inputs` + `produced_by`, behind a backend seam (zero-dep `local_backend`, or the default lazy `cloudfs_backend()`) |
 | `serve`     | put `status.html` behind a Cloudflare quick tunnel for a public live link (needs the `cloudflared` binary) |
 
 ```bash
@@ -233,6 +234,45 @@ only **two kinds of step** — both "produce → validate → persist a versione
 
 Both use **seams** (compute backend, storage sink, coding agent, review, `gh`) you swap
 for your real stack, and compose into the loop: implement → run.
+
+## Artifacts: inputs, outputs & lineage
+
+`stagehand.artifacts` is the storage seam made concrete: provide inputs *upfront*
+(datasets, configs, secrets, base adapters) and persist outputs (adapters, eval
+results) without losing track of them. Every artifact is identified by the
+**content hash of its bytes** — same bytes ⇒ same id ⇒ immutable, dedup'd, and
+re-resolvable even if a path moves — and records which artifacts it was derived
+from (`inputs`) and which run task produced it (`produced_by`). That's a lineage
+DAG you can serialize and re-resolve later.
+
+```python
+from stagehand import ArtifactStore
+
+store = ArtifactStore()                                   # cloudfs-backed by default
+ds  = store.put("data/train.jsonl", name="train-data")   # local → uploaded + registered
+cfg = store.put("configs/run.yaml", name="config")
+key = store.secret("OPENAI_API_KEY")                      # ref-only; value never uploaded
+
+def train(_):
+    # ... writes ./out/adapter (a directory) ...
+    return store.put("out/adapter", name="lora", inputs=[ds, cfg, key])  # lineage + produced_by
+
+with flow("runs"):
+    adapter = do(train, ds, name="train")                # Artifacts flow through handles
+    await run()
+
+p = store.path(adapter.result)        # materialize locally (cached by id, never re-downloaded)
+store.save("artifacts.lock.json")     # commit this pointer — re-resolves the whole DAG later
+```
+
+Directories (LoRA adapters, checkpoints) are tarred **deterministically** before
+hashing, so a dir is content-addressed exactly like a file. Storage lives behind a
+backend seam: `local_backend(root)` is a zero-dep content-addressed store on local
+disk (used in tests); `cloudfs_backend(…)` is the default and persists to GCS via
+[`cloudfs`](https://github.com/dtch1997/cloudfs) (imported lazily, so the core
+stays dependency-free). Pass `registry_path=flow.runs_dir / "artifacts.json"` to
+mirror the registry alongside the run as it goes; `save()` writes the same shape to
+a git-committable lock-file.
 
 ## Examples
 
