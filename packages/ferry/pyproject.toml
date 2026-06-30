@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ferry-sync"
+version = "0.1.0"
+description = "Pythonic push/pull between local and any rclone remote."
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+authors = [{ name = "Daniel Tan" }]
+keywords = ["rclone", "sync", "gcs", "s3", "storage"]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+ferry = "ferry.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ferry"]
