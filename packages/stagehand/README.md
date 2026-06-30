@@ -281,3 +281,4 @@ Runnable with faked compute, so they go anywhere in a couple of seconds:
 - [`examples/dsl_demo.py`](examples/dsl_demo.py) — the same sweep in `do`/`fanout`/`retry`.
 - [`examples/fanout_retry.py`](examples/fanout_retry.py) — policies + dynamic `expand`.
 - [`examples/agent_fleet.py`](examples/agent_fleet.py) — coding agents as a fleet of steps.
+- [`examples/artifacts.py`](examples/artifacts.py) — content-addressed artifacts with lineage (provide → produce → materialize → lock-file → reload & walk lineage).
