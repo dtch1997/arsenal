@@ -17,7 +17,8 @@ experiment runs.
 """
 from .monitor import monitor, mark, read_monitors, Monitor, SUFFIX
 from .dashboard import render_dashboard, default_note, COLORS
-from .engine import Flow, Handle, Task, RunState, best_of, with_retry
+from .engine import (Flow, Handle, Task, RunState, FlowCheckError,
+                     best_of, with_retry)
 from .dsl import flow, do, fanout, retry, each, run, current
 from .pipeline import live_dashboard, headless_handoff
 from .serve import serve, parse_tunnel_url
@@ -25,7 +26,7 @@ from .serve import serve, parse_tunnel_url
 __all__ = [
     "monitor", "mark", "read_monitors", "Monitor", "SUFFIX",
     "render_dashboard", "default_note", "COLORS",
-    "Flow", "Handle", "Task", "RunState", "best_of", "with_retry",
+    "Flow", "Handle", "Task", "RunState", "FlowCheckError", "best_of", "with_retry",
     "flow", "do", "fanout", "retry", "each", "run", "current",
     "live_dashboard", "headless_handoff",
     "serve", "parse_tunnel_url",

@@ -66,7 +66,7 @@ def fanout(fn, unit, *, n, judge=None, score=None, after=(), name=None):
     `unit` may be a handle (its result is the input). Returns a one-task handle."""
     policy = best_of(fn, n, judge=judge, score=score)
     return current().spawn(policy, (unit,), name=name or _name(fn, "fanout"),
-                           after=after)
+                           after=after, type_fn=fn)
 
 
 def retry(fn, unit, *, check, max_attempts=3, feedback=None, after=(), name=None):
@@ -74,7 +74,7 @@ def retry(fn, unit, *, check, max_attempts=3, feedback=None, after=(), name=None
     `do`). `unit` may be a handle. Returns a one-task handle."""
     policy = with_retry(fn, check=check, max_attempts=max_attempts, feedback=feedback)
     return current().spawn(policy, (unit,), name=name or _name(fn, "retry"),
-                           after=after)
+                           after=after, type_fn=fn)
 
 
 def each(fn, items, **kwargs):

@@ -32,8 +32,10 @@ import inspect
 import json
 import time
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
+from typing import (Any, Generic, TypeVar, Union,
+                    get_args, get_origin, get_type_hints)
 
 from .monitor import monitor as _monitor, mark
 
@@ -41,12 +43,22 @@ PENDING, RUNNING, DONE, FAILED, SKIPPED = (
     "pending", "running", "done", "failed", "skipped")
 _TERMINAL = frozenset((DONE, FAILED, SKIPPED))
 
+T = TypeVar("T")
+
 
 class _Filtered(Exception):
     """Raised inside a `filter` node when an item is pruned; not a real failure."""
     def __init__(self, issues):
         self.issues = list(issues)
         super().__init__("; ".join(map(str, self.issues)))
+
+
+class FlowCheckError(Exception):
+    """Raised by `Flow.check()` when the declared graph can't run start to end —
+    a missing dependency, a cycle, or an edge whose types don't line up."""
+    def __init__(self, issues):
+        self.issues = list(issues)
+        super().__init__("flow check failed:\n  - " + "\n  - ".join(self.issues))
 
 
 @dataclass
@@ -69,15 +81,21 @@ class Task:
     error: object = None
 
 
-class Handle:
+class Handle(Generic[T]):
     """The output collection of a node — a *growing* list of task ids plus
     subscribers fired per id. Downstream nodes subscribe to mint one task per
     upstream item as it appears, so static and dynamic fan-out share one path.
+
+    Parameterized by the type of a single result element (`elem_type`): a
+    `Handle[Model]` is a node producing `Model`s. The engine fills `elem_type`
+    from each step's return annotation so `flow.check()` can verify edges and
+    `.result` / `.results()` are typed in your editor.
     """
-    def __init__(self, flow, node, *, kind="many"):
+    def __init__(self, flow, node, *, kind="many", elem_type=Any):
         self.flow = flow
         self.node = node
         self.kind = kind                 # "one" (single task) | "many" (collection)
+        self.elem_type = elem_type       # type of one result element (Any if unknown)
         self.ids: list[str] = []
         self.closed = False
         self._on_id: list = []
@@ -106,12 +124,12 @@ class Handle:
             else:
                 self._on_close.append(on_close)
 
-    def results(self):
+    def results(self) -> list[T]:
         """Results of this node's tasks that finished `done` (call after `run`)."""
         return [self.flow.results[i] for i in self.ids if i in self.flow.results]
 
     @property
-    def result(self):
+    def result(self) -> T:
         """The single result of a one-task handle (`do`/`reduce`/`add`); for a
         collection handle, the list of done results."""
         if self.kind == "one":
@@ -159,6 +177,7 @@ class Flow:
         self._counter: dict[str, int] = {}
         self._node_conc: dict[str, int] = {}
         self._on_done: dict[str, list] = {}
+        self._checks: list = []          # (edge_label, expected_type, provided_type)
         self._start = None
 
     # ---- ids ------------------------------------------------------------- #
@@ -173,7 +192,7 @@ class Flow:
         each running `fn(item)`; results stream into the returned handle."""
         if concurrency:
             self._node_conc[node] = concurrency
-        out = Handle(self, node)
+        out = Handle(self, node, elem_type=_ret(fn))
 
         def mint_dep(up_id):
             tid = self._tid(node)
@@ -183,6 +202,7 @@ class Flow:
             out.add(tid)
 
         if isinstance(source, Handle):
+            self._record(f"map {node!r} <- {source.node!r}", _param0(fn), source.elem_type)
             source.subscribe(on_id=mint_dep, on_close=out.close)
         else:
             for item in source:
@@ -203,7 +223,8 @@ class Flow:
         """
         if concurrency:
             self._node_conc[node] = concurrency
-        out = Handle(self, node)
+        src_elem = source.elem_type if isinstance(source, Handle) else Any
+        out = Handle(self, node, elem_type=src_elem)   # filter passes items through
 
         def mint_dep(up_id):
             tid = self._tid(node)
@@ -213,6 +234,7 @@ class Flow:
             out.add(tid)
 
         if isinstance(source, Handle):
+            self._record(f"filter {node!r} <- {source.node!r}", _param0(pred), src_elem)
             source.subscribe(on_id=mint_dep, on_close=out.close)
         else:
             for item in source:
@@ -228,7 +250,10 @@ class Flow:
         """A single barrier task that runs `fn(list_of_results)` once *all* of
         `source`'s tasks are terminal — over the survivors (skipped/failed deps are
         dropped from the list). The one place a barrier is intended."""
-        out = Handle(self, node, kind="one")
+        out = Handle(self, node, kind="one", elem_type=_ret(fn))
+        if isinstance(source, Handle):
+            self._record(f"reduce {node!r} <- {source.node!r}",
+                         _param0(fn), list[source.elem_type])
 
         def make(dep_ids):
             tid = self._tid(node)
@@ -262,7 +287,8 @@ class Flow:
         runs per element). Use when the fan-out width isn't known until runtime."""
         if not isinstance(source, Handle):
             raise TypeError("expand needs an upstream handle as its source")
-        out = Handle(self, node)
+        out = Handle(self, node, elem_type=_elem_of(_ret(fn)))
+        self._record(f"expand {node!r} <- {source.node!r}", _param0(fn), source.elem_type)
         st = {"open": 0, "closed": False}
 
         def on_id(up_id):
@@ -297,20 +323,25 @@ class Flow:
             r = fn(*args)
             return await r if inspect.isawaitable(r) else r
         self.tasks[id] = Task(id, node, deps, run)
-        out = Handle(self, node, kind="one")
+        out = Handle(self, node, kind="one", elem_type=_ret(fn))
         out.add(id)
         out.close()
         return out
 
-    def spawn(self, fn, args=(), kwargs=None, *, name=None, after=(), gather=None):
+    def spawn(self, fn, args=(), kwargs=None, *, name=None, after=(), gather=None,
+              type_fn=None):
         """Add a single task running `fn(*args, **kwargs)`, where any `Handle` found
         in `args`/`kwargs` (even nested in lists/tuples/dicts) becomes a dependency
         and is substituted with its result at run time. `after` is extra ordering-
         only dependencies (handles). Returns a one-task handle. This is the
         per-task primitive the `do` / `fanout` / `retry` DSL is built on.
+
+        `type_fn` supplies the type annotations when `fn` is a wrapper (e.g. the
+        `best_of` / `with_retry` policies wrap the user fn); defaults to `fn`.
         """
         kwargs = {} if kwargs is None else kwargs
-        node = name or getattr(fn, "__name__", "task")
+        type_fn = type_fn or fn
+        node = name or getattr(type_fn, "__name__", "task")
         arg_handles = list(_handles_in(args)) + list(_handles_in(kwargs))
         top_level = [a for a in (*args, *kwargs.values()) if isinstance(a, Handle)]
         nested = len(arg_handles) > len(top_level)   # handle(s) inside a list/dict arg
@@ -321,6 +352,7 @@ class Flow:
             # a collection — a "many" handle, or a list/dict of handles passed as one
             # arg; separate scalar handle args are all-required (skip if any fails).
             gather = nested or any(h.kind == "many" for h in dep_handles)
+        self._record_spawn(node, type_fn, args, kwargs)
         tid = self._tid(node)
         async def run(results, args=args, kwargs=kwargs, fn=fn):
             a = _resolve(args, results)
@@ -328,19 +360,83 @@ class Flow:
             r = fn(*a, **kw)
             return await r if inspect.isawaitable(r) else r
         self.tasks[tid] = Task(tid, node, dep_ids, run, gather=gather)
-        out = Handle(self, node, kind="one")
+        out = Handle(self, node, kind="one", elem_type=_ret(type_fn))
         out.add(tid)
         out.close()
         return out
 
+    # ---- type checking ("compile") --------------------------------------- #
+    def _record(self, label, expected, provided):
+        self._checks.append((label, expected, provided))
+
+    def _record_spawn(self, node, fn, args, kwargs):
+        """Bind a `do`/`fanout`/`retry` call's handle args to `fn`'s params and
+        record an edge type check for each top-level scalar handle argument."""
+        try:
+            bound = inspect.signature(fn).bind_partial(*args, **kwargs)
+        except TypeError:
+            return
+        hints = _hints(fn)
+        for pname, val in bound.arguments.items():
+            if isinstance(val, Handle) and val.kind == "one":
+                self._record(f"do {node!r} arg {pname!r}",
+                             hints.get(pname, Any), val.elem_type)
+
+    def check(self):
+        """Verify the declared graph can run start to end, or raise
+        `FlowCheckError`. Checks every dependency exists, the graph is acyclic, and
+        each edge's producer type is compatible with the consumer's input type
+        (annotations are read from the step fns; unannotated == `Any`). Pure static
+        analysis of the built graph — call it (or `run(check=True)`) before running.
+        """
+        issues = []
+        for t in self.tasks.values():
+            for d in t.deps:
+                if d not in self.tasks:
+                    issues.append(f"{t.id!r}: depends on missing task {d!r}")
+        issues += self._find_cycle()
+        for label, expected, provided in self._checks:
+            if not _compatible(provided, expected):
+                issues.append(f"{label}: expects {_tn(expected)}, got {_tn(provided)}")
+        if issues:
+            raise FlowCheckError(issues)
+
+    def _find_cycle(self):
+        color = {}      # 0=visiting, 1=done
+        order = []
+        def visit(tid):
+            if color.get(tid) == 1:
+                return
+            if color.get(tid) == 0:
+                order.append(tid)
+                return [f"cycle through {' -> '.join(order + [tid])}"]
+            color[tid] = 0
+            order.append(tid)
+            for d in self.tasks[tid].deps:
+                if d in self.tasks:
+                    found = visit(d)
+                    if found:
+                        return found
+            color[tid] = 1
+            order.pop()
+            return []
+        for tid in list(self.tasks):
+            found = visit(tid)
+            if found:
+                return found
+        return []
+
     # ---- scheduler ------------------------------------------------------- #
-    async def run(self, *, stop_when=None):
+    async def run(self, *, stop_when=None, check=False):
         """Schedule the whole graph, streaming and bounded by `concurrency`.
 
         `stop_when(state) -> bool` is checked after every completion; when it
         returns truthy, in-flight tasks are cancelled and the run stops early.
-        Returns the final `RunState`.
+        With `check=True`, run `self.check()` first (raise before doing any work if
+        the graph is malformed). Returns the final `RunState`.
         """
+        if check:
+            self.check()
         self._start = time.time()
         self._gsem = asyncio.Semaphore(self.concurrency)
         self._node_sems = {n: asyncio.Semaphore(c)
@@ -515,6 +611,96 @@ def _apply_pred(pred, item):
     if not ok:
         raise _Filtered(issues)
     return item
+
+
+# --- type introspection for flow.check() ----------------------------------- #
+def _hints(fn):
+    """Resolved type hints for `fn`, or {} if they can't be resolved (forgiving)."""
+    try:
+        return get_type_hints(fn)
+    except Exception:
+        return getattr(fn, "__annotations__", {}) or {}
+
+
+def _ret(fn):
+    """`fn`'s return type (Any if unannotated/unresolvable)."""
+    return _hints(fn).get("return", Any)
+
+
+def _param0(fn):
+    """The annotation of `fn`'s first positional parameter (Any if none/unknown)."""
+    try:
+        params = inspect.signature(fn).parameters.values()
+    except (TypeError, ValueError):
+        return Any
+    hints = _hints(fn)
+    for p in params:
+        if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD):
+            return hints.get(p.name, Any)
+    return Any
+
+
+def _elem_of(annotation):
+    """The element type of an `Iterable[E]` / `list[E]` annotation (Any otherwise)."""
+    args = get_args(annotation)
+    return args[0] if args else Any
+
+
+def _is_any(t):
+    return t is Any or t is None or t is inspect.Parameter.empty
+
+
+def _members(t):
+    """Flatten a Union/Optional into its member types; otherwise [t]."""
+    if get_origin(t) is Union:
+        return list(get_args(t))
+    return [t]
+
+
+def _compatible(provided, expected):
+    """Is a value of type `provided` acceptable where `expected` is wanted?
+
+    Deliberately forgiving — a linter, not a type checker: unknown/`Any` matches
+    anything, and anything it can't reason about passes. It exists to catch the
+    clear mistakes (a `str` wired into a step that wants a `Model`).
+    """
+    if _is_any(provided) or _is_any(expected):
+        return True
+    # provided is OK if every provided member fits some expected member
+    return all(any(_match_one(p, e) for e in _members(expected))
+               for p in _members(provided))
+
+
+def _match_one(p, e):
+    if _is_any(p) or _is_any(e):
+        return True
+    op, oe = get_origin(p), get_origin(e)
+    if oe is not None:                       # expected is a generic (e.g. list[X])
+        if op is None:                       # provided is a bare class
+            return _subclass(p, oe)
+        if not (op is oe or _subclass(op, oe)):
+            return False
+        ap, ae = get_args(p), get_args(e)
+        if ap and ae:
+            return all(_match_one(x, y) for x, y in zip(ap, ae))
+        return True
+    if op is not None:                       # provided generic vs plain expected class
+        return _subclass(op, e)
+    return p is e or _subclass(p, e)
+
+
+def _subclass(a, b):
+    try:
+        return issubclass(a, b)
+    except TypeError:
+        return False
+
+
+def _tn(t):
+    """A short readable name for a type, for check() error messages."""
+    if _is_any(t):
+        return "Any"
+    return getattr(t, "__name__", None) or str(t).replace("typing.", "")
 
 
 async def _bounded_gather(thunks, concurrency):
