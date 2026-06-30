@@ -188,6 +188,24 @@ On clean exit the state goes `done`; on exception `failed` (error captured) and 
 `mark(path, …)` patches a unit post-hoc; `read_monitors(root)` loads the whole tree;
 `monitor(…, cleanup=True)` is ephemeral.
 
+## Logging
+
+stagehand logs to the stdlib logger `stagehand` with a `NullHandler` — **silent by
+default**, so your application decides where logs go. Flow start/finish and `stop_when`
+are `INFO`; a task that raises (captured, not re-raised — otherwise only visible on the
+dashboard) is `WARNING`; per-task start/done/skip and filter prunes are `DEBUG`.
+
+```python
+import stagehand
+stagehand.enable_logging("INFO")        # convenience; or configure `logging` yourself
+await flow.run()
+```
+```
+INFO stagehand: flow 'sweep' starting — 6 tasks, concurrency=4
+WARNING stagehand: ✗ train/2 failed: ValueError('diverged')
+INFO stagehand: flow 'sweep' done in 4.2s — 4 ok, 1 failed, 1 skipped
+```
+
 ## Examples
 
 Runnable with faked compute, so they go anywhere in a couple of seconds:

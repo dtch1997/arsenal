@@ -39,6 +39,7 @@ from typing import (Any, Generic, TypeVar, Union,
                     get_args, get_origin, get_type_hints)
 
 from .monitor import monitor as _monitor, mark
+from ._log import log
 
 # The monitor of the task currently running on this asyncio task — lets a step
 # stream its own live progress (e.g. an agent's action/tokens) to the dashboard
@@ -458,6 +459,8 @@ class Flow:
         state = RunState(self)
         running: set = set()
         stopped = False
+        log.info("flow %r starting — %d tasks, concurrency=%d",
+                 self.title, len(self.tasks), self.concurrency)
 
         while True:
             self._propagate_skips()
@@ -479,6 +482,8 @@ class Flow:
             if stop_when is not None and stop_when(state):
                 stopped = True
             if stopped:
+                log.info("flow %r: stop_when met — cancelling %d in-flight (%d done)",
+                         self.title, len(running), state.done)
                 for r in running:
                     r.cancel()
                 await asyncio.gather(*running, return_exceptions=True)
@@ -487,6 +492,9 @@ class Flow:
         if self.runs_dir is not None:
             for node in {t.node for t in self.tasks.values()}:
                 self._flush_node(node)
+        log.info("flow %r done in %.1fs — %d ok, %d failed, %d skipped",
+                 self.title, time.time() - self._start,
+                 state.done, state.failed, state.skipped)
         return state
 
     def _ready(self, t):
@@ -502,9 +510,12 @@ class Flow:
             for t in self.tasks.values():
                 if t.state != PENDING or t.gather:
                     continue
-                if any(self.tasks[d].state in (FAILED, SKIPPED) for d in t.deps):
+                dead = [d for d in t.deps
+                        if self.tasks[d].state in (FAILED, SKIPPED)]
+                if dead:
                     t.state = SKIPPED
                     changed = True
+                    log.debug("∅ %s skipped (upstream %s)", t.id, dead[0])
 
     async def _run_task(self, t):
         async with self._acquire(t):
@@ -512,6 +523,8 @@ class Flow:
             if self.runs_dir is not None:
                 leaf = t.id.split("/")[-1]
                 path = self.runs_dir / t.node / f"{leaf}.progress.json"
+            log.debug("→ %s", t.id)
+            t0 = time.time()
             try:
                 if path is not None:
                     with _monitor(t.id, 1, path, parent=t.node,
@@ -527,17 +540,20 @@ class Flow:
                 t.result = r
                 t.state = DONE
                 self.results[t.id] = r
+                log.debug("✓ %s (%.2fs)", t.id, time.time() - t0)
                 for cb in self._on_done.get(t.id, ()):   # dynamic fan-out hooks
                     cb(r)
             except _Filtered as f:
                 t.state = FAILED
                 t.error = f
+                log.debug("⊘ %s pruned: %s", t.id, "; ".join(map(str, f.issues)))
                 if path is not None:
                     mark(path, state="failed",
                          extra={"error": "filtered: " + "; ".join(map(str, f.issues))})
             except Exception as e:                       # captured; never aborts run
                 t.state = FAILED
                 t.error = e
+                log.warning("✗ %s failed: %r", t.id, e)
             finally:
                 if self.runs_dir is not None:
                     self._flush_node(t.node)

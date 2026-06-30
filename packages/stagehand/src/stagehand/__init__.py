@@ -18,6 +18,7 @@ experiment runs.
               finished run to a non-interactive `claude -p`).
   serve     — put status.html behind a Cloudflare quick tunnel (needs `cloudflared`).
 """
+from ._log import log, enable_logging
 from .monitor import monitor, mark, read_monitors, Monitor, SUFFIX
 from .dashboard import render_dashboard, default_note, COLORS
 from .engine import (Flow, Handle, Task, RunState, FlowCheckError,
@@ -29,6 +30,7 @@ from .pipeline import live_dashboard, headless_handoff
 from .serve import serve, parse_tunnel_url
 
 __all__ = [
+    "log", "enable_logging",
     "monitor", "mark", "read_monitors", "Monitor", "SUFFIX",
     "render_dashboard", "default_note", "COLORS",
     "Flow", "Handle", "Task", "RunState", "FlowCheckError", "best_of", "with_retry",
