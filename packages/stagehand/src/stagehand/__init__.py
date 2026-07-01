@@ -26,7 +26,9 @@ experiment runs.
               persists files/dirs/secrets by content hash (records `inputs` +
               `produced_by`), behind a backend seam (zero-dep `local_backend`, or
               the default lazy `cloudfs_backend()`).
-  serve     — put status.html behind a Cloudflare quick tunnel (needs `cloudflared`).
+  serve     — put status.html behind a public tunnel; a thin lazy re-export of the
+              standalone `marquee` library (providers: cloudflared / localhost.run /
+              ngrok), imported only when called so the core stays dependency-free.
 """
 from ._log import log, enable_logging
 from .monitor import monitor, mark, read_monitors, read_graph, Monitor, SUFFIX

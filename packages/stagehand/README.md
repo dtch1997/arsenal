@@ -23,7 +23,7 @@ fleet of coding agents, a data pipeline, or an eval harness. The core is pure st
 | `agents`    | **coding agents as steps**: `agent(prompt, …)` → `AgentOutcome`, behind a backend seam (zero-dep `subprocess_backend`, or the recommended lazy `flightdeck_backend()`) |
 | `live`      | `live_dashboard` — poll a running flow's monitor tree and re-render one auto-refreshing HTML status page |
 | `artifacts` | **content-addressed inputs/outputs with lineage**: `ArtifactStore` persists files/dirs/secrets by content hash and tracks `inputs` + `produced_by`, behind a backend seam (zero-dep `local_backend`, or the default lazy `cloudfs_backend()`) |
-| `serve`     | put `status.html` behind a Cloudflare quick tunnel for a public live link (needs the `cloudflared` binary) |
+| `serve`     | put `status.html` behind a public tunnel for a live link — a lazy re-export of the standalone [`marquee`](https://github.com/dtch1997/marquee) lib (cloudflared / localhost.run / ngrok) |
 
 ```bash
 make setup     # uv sync
@@ -157,7 +157,7 @@ Any step can stream its own live progress to the dashboard with `current_monitor
 
 ## Serving the dashboard
 
-`live_dashboard` writes `status.html`; `serve` puts it behind a Cloudflare quick tunnel:
+`live_dashboard` writes `status.html`; `serve` puts it behind a public tunnel:
 
 ```python
 from stagehand import serve
@@ -169,8 +169,11 @@ async with live_dashboard("runs", title="my run"):
         stop()
 ```
 
-The only requirement is the **`cloudflared`** binary on PATH — touched only when you call
-`serve()`, so the core stays dependency-free.
+`serve` is a thin lazy re-export of the standalone [**marquee**](https://github.com/dtch1997/marquee)
+library, which does the local HTTP server + tunnel behind a pluggable provider seam
+(`cloudflared` by default, zero-install `localhost.run` over `ssh`, or `ngrok`). It's
+imported only when you call `serve()`, so the core stays dependency-free — install it
+with `pip install git+https://github.com/dtch1997/marquee`.
 
 ## The monitor primitive
 
