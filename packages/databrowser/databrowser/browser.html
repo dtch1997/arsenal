@@ -138,14 +138,24 @@ async function load() {
     if (f.kind === "categorical") state.cat[f.name] = new Set();
     else state.range[f.name] = { lo: null, hi: null };
   });
+  // Precompute once: a lowercased search blob and a display label per record, so
+  // filtering and list rendering don't re-serialize every record each time.
+  state.search = state.records.map(r => JSON.stringify(r).toLowerCase());
+  state.labels = state.records.map(recLabel);
+  // One delegated click listener on the list (survives innerHTML swaps) instead
+  // of an onclick per row — O(1) wiring regardless of row count.
+  $("#list").addEventListener("click", e => {
+    const el = e.target.closest(".rec-item");
+    if (el) setActive(+el.dataset.pos);
+  });
   renderFilters();
   applyFilter();
 }
 
 // --- filtering ------------------------------------------------------------ //
-function recordMatches(rec, exceptField) {
+function recordMatches(rec, i, exceptField) {
   const q = state.query.trim().toLowerCase();
-  if (q && !JSON.stringify(rec).toLowerCase().includes(q)) return false;
+  if (q && !state.search[i].includes(q)) return false;
   for (const f of state.filters) {
     if (f.name === exceptField) continue;
     if (f.kind === "categorical") {
@@ -165,7 +175,7 @@ function recordMatches(rec, exceptField) {
 
 function applyFilter() {
   state.view = [];
-  state.records.forEach((r, i) => { if (recordMatches(r, null)) state.view.push(i); });
+  state.records.forEach((r, i) => { if (recordMatches(r, i, null)) state.view.push(i); });
   if (state.idx >= state.view.length) state.idx = Math.max(0, state.view.length - 1);
   renderCounts();
   renderList();
@@ -195,10 +205,10 @@ function catBlock(f) {
   const sel = state.cat[f.name] || new Set();
   // live counts under the OTHER active filters
   const counts = new Map();
-  for (const r of state.records) {
-    if (!recordMatches(r, f.name)) continue;
+  state.records.forEach((r, i) => {
+    if (!recordMatches(r, i, f.name)) return;
     const k = valKey(r[f.name]); counts.set(k, (counts.get(k) || 0) + 1);
-  }
+  });
   sel.forEach(v => { if (!counts.has(v)) counts.set(v, 0); });
   const order = (f.values || []).map(valKey);
   [...counts.keys()].forEach(k => { if (!order.includes(k)) order.push(k); });
@@ -238,7 +248,7 @@ function wireFilters() {
       const r = state.range[inp.dataset.range];
       const raw = inp.value.trim();
       r[inp.dataset.end] = raw === "" ? null : Number(raw);
-      state.idx = 0; applyFilter();
+      scheduleFilter(false);
     };
   });
   const clr = $("#clearAll");
@@ -269,11 +279,20 @@ function renderList() {
   host.innerHTML = state.view.map((ri, pos) =>
     `<div class="rec-item${pos === state.idx ? " active" : ""}" data-pos="${pos}">` +
     `<span class="rec-idx">#${ri}</span>` +
-    `<span class="rec-label">${esc(recLabel(state.records[ri]))}</span></div>`
+    `<span class="rec-label">${esc(state.labels[ri])}</span></div>`
   ).join("");
-  host.querySelectorAll(".rec-item").forEach(el => {
-    el.onclick = () => { state.idx = +el.dataset.pos; renderList(); renderContent(); };
-  });
+}
+
+// Move the selection without rebuilding the list: just shift the `active` class
+// and re-render the content pane. O(1) instead of O(rows) per click / arrow key.
+function setActive(pos) {
+  if (pos < 0 || pos >= state.view.length) return;
+  const cur = $("#list .rec-item.active");
+  if (cur) cur.classList.remove("active");
+  state.idx = pos;
+  const el = $(`#list .rec-item[data-pos="${pos}"]`);
+  if (el) { el.classList.add("active"); el.scrollIntoView({ block: "nearest" }); }
+  renderContent();
 }
 
 function renderContent() {
@@ -300,10 +319,15 @@ function renderCounts() {
 // --- keyboard ------------------------------------------------------------- //
 function move(d) {
   if (!state.view.length) return;
-  state.idx = Math.min(Math.max(0, state.idx + d), state.view.length - 1);
-  renderList(); renderContent();
-  const a = $("#list .rec-item.active");
-  if (a) a.scrollIntoView({ block: "nearest" });
+  setActive(Math.min(Math.max(0, state.idx + d), state.view.length - 1));
+}
+
+// Debounced re-filter for rapid inputs (typing in search / range boxes), so we
+// re-scan the records once the input settles rather than on every keystroke.
+let _filterTimer;
+function scheduleFilter(withFilters) {
+  clearTimeout(_filterTimer);
+  _filterTimer = setTimeout(() => { state.idx = 0; applyFilter(); if (withFilters) renderFilters(); }, 120);
 }
 document.addEventListener("keydown", e => {
   if (e.target.matches("input")) {
@@ -314,7 +338,7 @@ document.addEventListener("keydown", e => {
   else if (e.key === "k" || e.key === "ArrowUp") { e.preventDefault(); move(-1); }
   else if (e.key === "/") { e.preventDefault(); $("#search").focus(); }
 });
-$("#search").oninput = e => { state.query = e.target.value; state.idx = 0; applyFilter(); renderFilters(); };
+$("#search").oninput = e => { state.query = e.target.value; scheduleFilter(true); };
 
 load().catch(err => { $("#content").innerHTML = `<div class="empty">failed to load: ${esc(err)}</div>`; });
 </script>
