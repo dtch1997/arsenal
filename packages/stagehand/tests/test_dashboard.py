@@ -1,18 +1,9 @@
 """Unit tests for the HTML dashboard renderer (pure; no I/O).
 
-Two paths: the topology-aware render (mermaid DAG + swimlane, when a `graph` is
-passed) and the legacy flat table (`graph=None`, kept as a fallback).
+The renderer is deliberately generic: a status table of whatever monitor files
+exist (always), plus a mermaid DAG when a `graph` topology is passed.
 """
-import re
-
-from stagehand.dashboard import render_dashboard, default_note, COLORS, GLYPH
-
-
-def _swim(html):
-    """The `<table class=swim>…</table>` region only (so column assertions don't
-    accidentally match the mermaid block, which also labels every node)."""
-    m = re.search(r"class=swim>(.*?)</table>", html, re.S)
-    return m.group(1) if m else ""
+from stagehand.dashboard import render_dashboard, default_note, COLORS
 
 
 def _m(name, state, done, total, parent=None, extra=None):
@@ -30,6 +21,7 @@ def _node(name, kind, rank):
     return {"name": name, "kind": kind, "rank": rank}
 
 
+# --- generic status table -------------------------------------------------- #
 def test_default_note_renders_extra_skipping_error():
     note = default_note({"loss": 0.5, "error": "boom", "acc": 0.7})
     assert "loss=0.5" in note and "acc=0.7" in note
@@ -73,11 +65,17 @@ def test_error_is_truncated():
     assert "x" * 90 in html and "x" * 91 not in html
 
 
-# --- topology-aware render (mermaid DAG + swimlane) ------------------------- #
+def test_table_is_present_without_a_graph_and_draws_no_dag():
+    html = render_dashboard([_m("sweep", "running", 0, 1)], started=0)
+    assert "table class=status" in html and "1 units" in html
+    assert "flowchart LR" not in html               # no topology -> no DAG
+
+
+# --- DAG panel (mermaid), when a graph topology is present ------------------ #
 def _demo_graph():
     return {"title": "t",
-            "nodes": [_node("train", "task", 0), _node("gate", "task", 1),
-                      _node("eval", "task", 2), _node("summary", "gather", 3)],
+            "nodes": [_node("train", "map", 0), _node("gate", "filter", 1),
+                      _node("eval", "map", 2), _node("summary", "reduce", 3)],
             "edges": [["train", "gate"], ["gate", "eval"], ["eval", "summary"]]}
 
 
@@ -105,42 +103,17 @@ def test_graph_render_emits_mermaid_topology_with_edges():
     assert "n_train --> n_gate" in html and "n_eval --> n_summary" in html
 
 
-def test_swimlane_has_a_row_per_source_item_with_lineage():
+def test_status_table_lists_tasks_even_with_a_graph():
     html = render_dashboard(_demo_tasks(), started=0, graph=_demo_graph())
-    swim = _swim(html)
-    assert swim
-    # one row per train item (the spine roots), in order
-    assert swim.index("train/0") < swim.index("train/1") < swim.index("train/2")
-    # spine columns are the fanned-out nodes, not the barrier
-    assert "train<br>" in swim and "eval<br>" in swim
-    assert "summary" not in swim  # barrier is a footer band, not a column
+    # the generic table still lists every task, with no swimlane
+    assert "table class=status" in html
+    assert "class=swim" not in html        # the sweep-specific swimlane is gone
+    for tid in ("train/0", "gate/2", "eval/1", "summary/0"):
+        assert tid in html
 
 
-def test_pruned_item_shows_pruned_glyph_and_blank_downstream():
+def test_pruned_task_shown_distinctly_in_table():
     html = render_dashboard(_demo_tasks(), started=0, graph=_demo_graph())
-    assert GLYPH["pruned"] in html and COLORS["pruned"] in html  # gate/2 pruned
-    assert GLYPH["running"] in html                              # eval/1 running
-
-
-def test_barrier_is_footer_band_and_singletons_are_cards():
-    graph = {"title": "t",
-             "nodes": [_node("train", "task", 0), _node("eval", "task", 1),
-                       _node("summary", "gather", 2), _node("report", "task", 3)],
-             "edges": [["train", "eval"], ["eval", "summary"], ["summary", "report"]]}
-    tasks = [_t("train/0", "train", "done"), _t("train/1", "train", "done"),
-             _t("eval/0", "eval", "done", deps=["train/0"]),
-             _t("eval/1", "eval", "done", deps=["train/1"]),
-             _t("summary/0", "summary", "done", deps=["eval/0", "eval/1"]),
-             _t("report/0", "report", "done", deps=["summary/0"])]
-    html = render_dashboard(tasks, started=0, graph=graph)
-    assert "class=band" in html and "summary" in html      # gather -> footer band
-    assert "class=card" in html and "report" in html       # singleton -> card
-    # neither the barrier nor the singleton is a swimlane column
-    swim = _swim(html)
-    assert "report" not in swim and "summary" not in swim
-    assert "train<br>" in swim and "eval<br>" in swim
-
-
-def test_falls_back_to_flat_table_without_graph():
-    html = render_dashboard([_m("sweep", "running", 0, 1)], started=0)
-    assert "<table>" in html and "1 units" in html and "flowchart LR" not in html
+    # gate/2 was filtered -> shows as pruned (its own colour), not a hard failure
+    assert COLORS["pruned"] in html and ">pruned<" in html
+    assert "1 pruned" in html              # chip count reflects it

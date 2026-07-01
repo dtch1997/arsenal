@@ -3,9 +3,10 @@ experiment runs.
 
   monitor   — a file-backed `running/done/failed` + `done/total` primitive per unit
               of work; units link via `parent` into a tree.
-  dashboard — render the run as one auto-refreshing HTML page: a mermaid DAG of
-              the nodes + a swimlane of per-item flow through them (falls back to a
-              flat status table when no `graph.json` topology is present).
+  dashboard — render the run as one auto-refreshing HTML status page: a generic
+              table of every unit (state/progress/note/error), plus a mermaid DAG
+              of the nodes when a `graph.json` topology is present. Renders
+              whatever monitor files exist — no assumptions about the work's shape.
   engine    — the DAG executor: declare work with `Flow.map`/`filter`/`reduce`/
               `expand`/`add` (+ `best_of` / `with_retry` node policies) and
               `await flow.run(stop_when=...)`. The scheduler streams results between
