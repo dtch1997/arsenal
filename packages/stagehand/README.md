@@ -189,8 +189,10 @@ with monitor("cell_s0", total=256, path="runs/cell_s0/train.progress.json",
 ```
 
 On clean exit the state goes `done`; on exception `failed` (error captured) and re-raises.
-`mark(path, …)` patches a unit post-hoc; `read_monitors(root)` loads the whole tree;
-`monitor(…, cleanup=True)` is ephemeral.
+`mark(path, …)` patches a unit post-hoc; `read_monitors(root)` loads the whole tree.
+Monitors are **ephemeral by default** (the progress file is removed on exit); pass
+`monitor(…, cleanup=False)` to persist the final state (e.g. for a dashboard to read
+a finished run — as the engine does for its task files).
 
 ## Logging
 

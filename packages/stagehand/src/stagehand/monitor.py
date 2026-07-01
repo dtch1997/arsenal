@@ -12,15 +12,18 @@ of per-cell train/eval monitors), so a dashboard renders a tree just by reading 
             ...
             m.update(loss=loss)        # advance the ticker, record extra fields
 
-On clean exit the file's state -> "done"; on exception -> "failed" with the error
-recorded, then the exception propagates (so the caller still sees it). Writes are
-throttled to `min_interval` seconds, but start / finish / failure always flush.
+While running, the file's state is "running"; on the throttled writes it carries
+live progress. Writes are throttled to `min_interval` seconds, but start / finish
+/ failure always flush.
 
-Pass ``cleanup=True`` for an *ephemeral* monitor: the progress file is removed
-when the context exits (success or failure) instead of being left at its final
-state. Use this when the unit's outcome is recorded elsewhere and the
-``progress.json`` is only needed to show live progress while it runs (e.g. a
-driver that keeps its own persistent state and just wants a live ticker).
+Monitors are **ephemeral by default** (``cleanup=True``): the progress file is
+removed when the context exits (success *or* failure), since the common case is a
+live ticker whose outcome is recorded elsewhere (a driver with its own persistent
+state, or the engine which tracks task results separately). Pass ``cleanup=False``
+to *persist* the file at its final state instead — "done", or "failed" with the
+error recorded — e.g. so a dashboard can render a finished run after the fact.
+On exception the error is recorded and re-raised (so the caller still sees it)
+regardless of ``cleanup``.
 """
 from __future__ import annotations
 import json, time
@@ -54,7 +57,7 @@ class Monitor:
 
 @contextmanager
 def monitor(name, total, path, *, parent=None, meta=None, min_interval=0.5,
-            cleanup=False):
+            cleanup=True):
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     state = {"name": name, "parent": parent, "total": total, "done": 0,

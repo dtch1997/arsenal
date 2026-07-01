@@ -11,7 +11,8 @@ from stagehand.live import live_dashboard
 def test_live_dashboard_writes_and_finalizes(tmp_path):
     async def body():
         async with live_dashboard(tmp_path, title="t", interval=0.05) as html_path:
-            with monitor("u", 1, tmp_path / "u.progress.json", parent=None, min_interval=0) as m:
+            with monitor("u", 1, tmp_path / "u.progress.json", parent=None,
+                         min_interval=0, cleanup=False) as m:
                 await asyncio.sleep(0.08)     # let the writer tick at least once
                 m.update()
             await asyncio.sleep(0.08)

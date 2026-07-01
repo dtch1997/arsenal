@@ -552,7 +552,7 @@ class Flow:
                 if path is not None:
                     with _monitor(t.id, 1, path, parent=t.node,
                                   meta={"node": t.node, "deps": list(t.deps)},
-                                  min_interval=0) as m:
+                                  min_interval=0, cleanup=False) as m:  # persist for the dashboard
                         tok = _task_monitor.set(m)
                         try:
                             r = await t.run(self.results)
