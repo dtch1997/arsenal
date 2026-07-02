@@ -35,9 +35,12 @@ Modal **Sandbox** via the `modal` SDK.
 ## Install
 
 ```bash
-pip install bellhop          # RunPod backend (or: pip install git+https://github.com/dtch1997/bellhop)
-pip install bellhop[modal]   # add the Modal backend
+pip install bellhop-py           # RunPod backend (or: pip install git+https://github.com/dtch1997/bellhop)
+pip install 'bellhop-py[modal]'  # add the Modal backend
 ```
+
+(The PyPI distribution is `bellhop-py` — the bare `bellhop` name is an
+unrelated package — but the import name and CLI are plain `bellhop`.)
 
 For the **RunPod** backend, set `RUNPOD_API_KEY`. Connection uses your SSH
 keypair (`~/.ssh/id_ed25519` by default): bellhop injects the public key as the

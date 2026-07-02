@@ -13,7 +13,7 @@ Two things are *simpler* than the RunPod path and so are absent here:
   ``create`` kwargs: ``timeout`` (hard max lifetime, ~= RunPod ``terminate_after``)
   and ``idle_timeout`` (terminate after inactivity, ~= ``stop_after``).
 
-``modal`` is an optional dependency (``pip install bellhop[modal]``); it is
+``modal`` is an optional dependency (``pip install 'bellhop-py[modal]'``); it is
 imported lazily so a RunPod-only install never needs it. Code/result transfer is
 tar-over-exec (only needs ``tar`` in the image), mirroring the pod's tar-over-ssh.
 """
@@ -41,7 +41,7 @@ def _import_modal():
     except ImportError as e:  # pragma: no cover - exercised only without the extra
         raise PreflightError(
             "the Modal backend needs the `modal` package — install it with "
-            "`pip install bellhop[modal]`"
+            "`pip install 'bellhop-py[modal]'`"
         ) from e
     return modal
 
