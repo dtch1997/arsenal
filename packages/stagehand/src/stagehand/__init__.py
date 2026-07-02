@@ -29,6 +29,10 @@ experiment runs.
   serve     — put status.html behind a public tunnel; a thin lazy re-export of the
               standalone `marquee` library (providers: cloudflared / localhost.run /
               ngrok), imported only when called so the core stays dependency-free.
+  manifest  — automatic provenance: `Flow.run()` writes `runs_dir/manifest.json`
+              (git sha/dirty/branch, argv, cwd, python, host, optional config) and
+              `ArtifactStore.put()` stamps `meta["git"]` on every produced artifact,
+              so results always answer "which code produced this?".
 """
 from ._log import log, enable_logging
 from .monitor import monitor, mark, read_monitors, read_graph, Monitor, SUFFIX
@@ -41,6 +45,7 @@ from .agents import (agent, AgentOutcome, AgentSpec, subprocess_backend,
 from .live import live_dashboard
 from .artifacts import (Artifact, ArtifactStore, local_backend, cloudfs_backend,
                         set_default_artifact_backend)
+from .manifest import capture, write_manifest, git_info, git_stamp
 from .serve import serve, parse_tunnel_url
 from . import checks
 
@@ -56,5 +61,6 @@ __all__ = [
     "live_dashboard",
     "Artifact", "ArtifactStore", "local_backend", "cloudfs_backend",
     "set_default_artifact_backend",
+    "capture", "write_manifest", "git_info", "git_stamp",
     "serve", "parse_tunnel_url",
 ]

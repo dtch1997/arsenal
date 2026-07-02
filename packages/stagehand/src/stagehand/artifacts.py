@@ -40,6 +40,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from .engine import current_monitor
+from .manifest import git_stamp
 
 _CHUNK = 1 << 20   # 1 MiB streaming, matches cloudfs
 
@@ -178,9 +179,11 @@ class ArtifactStore:
                 tmp.unlink(missing_ok=True)
         else:
             fid = self.backend.put_file(path)
+        meta = dict(meta or {})
+        meta.setdefault("git", git_stamp())    # code-version provenance, automatic
         return self._register(Artifact(
             name=name, id=fid, kind=kind, uri=self.backend.uri(fid),
-            inputs=_ids(inputs), produced_by=_current_task(), meta=dict(meta or {})))
+            inputs=_ids(inputs), produced_by=_current_task(), meta=meta))
 
     def register_uri(self, uri, name, *, id=None, kind="file",
                      inputs=(), meta=None) -> Artifact:

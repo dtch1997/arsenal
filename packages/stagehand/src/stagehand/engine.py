@@ -40,6 +40,7 @@ from typing import (Any, Generic, TypeVar, Union,
                     get_args, get_origin, get_type_hints)
 
 from .monitor import monitor as _monitor, mark
+from .manifest import write_manifest
 from ._log import log
 
 # The monitor of the task currently running on this asyncio task — lets a step
@@ -184,10 +185,11 @@ class Flow:
     """A DAG of work. Declare nodes with `map`/`filter`/`reduce`/`expand`/`add`,
     then `await flow.run()`."""
 
-    def __init__(self, runs_dir=None, *, concurrency=8, title="flow"):
+    def __init__(self, runs_dir=None, *, concurrency=8, title="flow", config=None):
         self.runs_dir = Path(runs_dir) if runs_dir is not None else None
         self.concurrency = concurrency
         self.title = title
+        self.config = config      # JSON-serializable; snapshotted into manifest.json
         self.tasks: dict[str, Task] = {}
         self.results: dict[str, object] = {}
         self._counter: dict[str, int] = {}
@@ -476,6 +478,9 @@ class Flow:
         self._start = time.time()
         if self.runs_dir is not None:
             self._flush_graph()
+            write_manifest(self.runs_dir / "manifest.json", self.config,
+                           flow={"title": self.title, "tasks": len(self.tasks),
+                                 "concurrency": self.concurrency})
         self._gsem = asyncio.Semaphore(self.concurrency)
         self._node_sems = {n: asyncio.Semaphore(c)
                            for n, c in self._node_conc.items()}

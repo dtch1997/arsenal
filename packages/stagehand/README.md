@@ -24,6 +24,7 @@ fleet of coding agents, a data pipeline, or an eval harness. The core is pure st
 | `live`      | `live_dashboard` — poll a running flow's monitor tree and re-render one auto-refreshing HTML status page |
 | `artifacts` | **content-addressed inputs/outputs with lineage**: `ArtifactStore` persists files/dirs/secrets by content hash and tracks `inputs` + `produced_by`, behind a backend seam (zero-dep `local_backend`, or the default lazy `cloudfs_backend()`) |
 | `serve`     | put `status.html` behind a public tunnel for a live link — a lazy re-export of the standalone [`marquee`](https://github.com/dtch1997/marquee) lib (cloudflared / localhost.run / ngrok) |
+| `manifest`  | **automatic provenance**: every `flow.run()` writes `runs_dir/manifest.json` (git sha/dirty/branch, argv, config, …) and every `store.put()` stamps `meta["git"]` — results always answer *"which code produced this?"* |
 
 ```bash
 make setup     # uv sync
@@ -278,6 +279,23 @@ disk (used in tests); `cloudfs_backend(…)` is the default and persists to GCS 
 stays dependency-free). Pass `registry_path=flow.runs_dir / "artifacts.json"` to
 mirror the registry alongside the run as it goes; `save()` writes the same shape to
 a git-committable lock-file.
+
+## Manifests: which code produced this?
+
+Provenance is automatic. When a flow has a `runs_dir`, `flow.run()` writes
+`runs_dir/manifest.json` — git state (sha / dirty / branch / remote), the exact
+invocation (argv, cwd, python, host), a timestamp, and the flow's shape. Pass your
+resolved experiment config to snapshot it too:
+
+```python
+flow = Flow("runs", title="sweep", config={"model": "qwen3-30b", "seed": 0})
+```
+
+Every `ArtifactStore.put()` also stamps `{"sha", "dirty"}` into the artifact's
+`meta["git"]`, so a committed `artifacts.lock.json` records the code version next
+to each artifact's `inputs`/`produced_by`. Outside a git repo both degrade to
+`git: null` instead of failing. For ad-hoc scripts there's `write_manifest(path,
+config)` / `capture()` directly.
 
 ## Examples
 
