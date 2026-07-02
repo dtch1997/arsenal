@@ -1,0 +1,15 @@
+{
+  "assignee": "dtch1997@users.noreply.github.com",
+  "blocked_by": [],
+  "closed_at": "2026-07-02T14:43:59Z",
+  "created": "2026-07-02T14:12:56Z",
+  "description": "Fixes the cheap-first principle (only sci-mt had a smoke path). flow.run(smoke=2) truncates every fan-out (Flow.map etc.) to N items and runs the WHOLE DAG including analysis steps \u2014 exercising the full pipeline (train \u2192 sample \u2192 judge \u2192 plot) before the fleet launches, catching schema mismatches in plotting before the $200 of GPU time. Smoke outputs must be tagged/segregated so they never pollute real results or the memoization cache for real runs.\n\n## Acceptance criteria\nflow.run(smoke=N) runs every step of the DAG with fan-outs truncated to N; smoke artifacts are tagged and excluded from real-run cache keys and results; documented in README/cookbook.\n\n## Notes\nREVERSED per design feedback: engine smoke mode (PR #21) reverted in PR #22 (v1.8.0). Resolution is now the config-first pattern \u2014 workflows take a config.yaml and ship a *_smoke.yaml next to it; memo segregation is automatic (config values ride into step inputs). Documented in README 'Cheap-first: smoke configs, not an engine mode'.",
+  "id": "stg-teu.3",
+  "labels": [],
+  "parent": "stg-teu",
+  "priority": 2,
+  "status": "closed",
+  "title": "Engine-level smoke mode: flow.run(smoke=N)",
+  "type": "feature",
+  "updated": "2026-07-02T14:59:37Z"
+}

@@ -1,0 +1,15 @@
+{
+  "assignee": "dtch1997@users.noreply.github.com",
+  "blocked_by": [],
+  "closed_at": null,
+  "created": "2026-07-02T14:12:26Z",
+  "description": "Make stagehand automatically deliver the experiment design principles (jarvis PR #98, docs/experiment-design-principles.md) to any user. Audit of 6 experiment repos found lineage and idempotence weak everywhere (0/6 strong) even though stagehand has an artifacts service \u2014 because repos use stagehand as a monitoring wrapper, not the execution/artifact path. Strategy: make stagehand own the step execution + artifact write path, and make that the laziest path. Three automatable principles: lineage (auto run-manifest), idempotence (content-keyed step memoization), cheap-first (engine smoke mode). Validate ergonomics with a pilot port of sdf-hallucination's eval chain.",
+  "id": "stg-teu",
+  "labels": [],
+  "parent": null,
+  "priority": 1,
+  "status": "open",
+  "title": "Bake experiment design principles into stagehand",
+  "type": "epic",
+  "updated": "2026-07-02T14:12:26Z"
+}

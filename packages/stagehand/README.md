@@ -353,3 +353,9 @@ Runnable with faked compute, so they go anywhere in a couple of seconds:
 - [`examples/fanout_retry.py`](examples/fanout_retry.py) — policies + dynamic `expand`.
 - [`examples/agent_fleet.py`](examples/agent_fleet.py) — coding agents as a fleet of steps.
 - [`examples/artifacts.py`](examples/artifacts.py) — content-addressed artifacts with lineage (provide → produce → materialize → lock-file → reload & walk lineage).
+
+## Issue tracking
+
+Issues live in-repo under [`.cairn/`](.cairn/), tracked with
+[cairn](https://github.com/dtch1997/cairn) (id prefix `stg`). Start with
+`cairn ready` to see unblocked work; `cairn prime` prints workflow context.

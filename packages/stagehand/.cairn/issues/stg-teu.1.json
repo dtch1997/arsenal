@@ -1,0 +1,15 @@
+{
+  "assignee": "dtch1997@users.noreply.github.com",
+  "blocked_by": [],
+  "closed_at": "2026-07-02T14:31:37Z",
+  "created": "2026-07-02T14:12:53Z",
+  "description": "Fixes the lineage principle (failed 6/6 in the jarvis adherence review): no artifact records the code version that produced it. Automatically capture into every run record and artifact lineage entry: git SHA + dirty flag, argv/command line, config snapshot (or content hash), timestamp, upstream artifact ids. Zero API change \u2014 benefits even repos that only use the monitor. Smallest, do first.\n\n## Acceptance criteria\nAny run started via stagehand writes a manifest.json (or equivalent record) containing git SHA, dirty flag, argv, config snapshot, upstream artifact ids; artifacts created via the artifacts service carry a pointer back to the producing manifest; works with no user code changes beyond existing stagehand usage.\n\n## Notes\nImplemented on branch run-manifest \u2192 https://github.com/dtch1997/stagehand/pull/19 (v1.5.0, 111 tests pass). Close on merge.",
+  "id": "stg-teu.1",
+  "labels": [],
+  "parent": "stg-teu",
+  "priority": 1,
+  "status": "closed",
+  "title": "Auto run-manifest: stamp git SHA + config + upstream ids on every run/artifact",
+  "type": "feature",
+  "updated": "2026-07-02T14:31:37Z"
+}
