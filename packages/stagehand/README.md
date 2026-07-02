@@ -26,6 +26,7 @@ fleet of coding agents, a data pipeline, or an eval harness. The core is pure st
 | `serve`     | put `status.html` behind a public tunnel for a live link — a lazy re-export of the standalone [`marquee`](https://github.com/dtch1997/marquee) lib (cloudflared / localhost.run / ngrok) |
 | `manifest`  | **automatic provenance**: every `flow.run()` writes `runs_dir/manifest.json` (git sha/dirty/branch, argv, config, …) and every `store.put()` stamps `meta["git"]` — results always answer *"which code produced this?"* |
 | `memo`      | **content-keyed step memoization**: `Flow(memo=…)` persists every successful result keyed on fn source + input values — identical re-runs are free (crashed sweeps resume), changed steps re-run, `run(refresh=True)` deliberately resamples |
+| smoke mode  | **the cheap rehearsal**: `Flow(smoke=N)` truncates every fan-out to N items but runs the whole DAG — analysis included — so the last-step schema bug surfaces before the compute bill; smoke results never pollute the real memo cache |
 
 ```bash
 make setup     # uv sync
@@ -326,6 +327,24 @@ inputs degrade to a cache *miss*, never a wrong hit. Cached tasks show
 `cached: true` on the dashboard. The store is a plain directory of
 `<key>.json` files — share it on a shared filesystem, delete it to drop the
 cache.
+
+## Smoke mode: exercise everything, cheaply
+
+Every sweep should have an N=2, five-minute version that runs the **full**
+pipeline — analysis and plotting included — before the fleet launches, so the
+schema mismatch in the last step surfaces before the compute bill, not after.
+`smoke=N` is that, built in:
+
+```python
+flow = Flow("runs", memo="runs/memo", smoke=2)   # every fan-out truncated to 2
+```
+
+Every fan-out is truncated to N items — static `map`/`filter`/`reduce` sources,
+`expand` outputs, the DSL's `each` — while the DAG's *shape* is untouched: every
+node still runs, end to end. It's a construction-time parameter (tasks are
+minted at declaration), so flip it via your config/CLI. Smoke runs memoize
+under smoke-tagged keys and stamp `flow.smoke` into `manifest.json`, so a
+truncated run's outputs never masquerade as real results.
 
 ## Examples
 

@@ -39,16 +39,18 @@ def current() -> Flow:
 
 
 @contextmanager
-def flow(runs_dir=None, *, concurrency=8, title="flow", config=None, memo=None):
+def flow(runs_dir=None, *, concurrency=8, title="flow", config=None, memo=None,
+         smoke=None):
     """Open a `Flow` and make it the current one for `do`/`fanout`/`retry`/`run`.
 
     Yields the underlying `Flow`, so you can drop down to `Flow.map`/`filter`/
     `reduce`/`expand` for the parts the per-task DSL doesn't cover. `config` is
     snapshotted into the run's manifest.json; `memo` (a directory or `Memo`)
-    enables content-keyed step memoization.
+    enables content-keyed step memoization; `smoke=N` truncates every fan-out
+    (`each`, static map/filter/reduce sources, expand outputs) to N items.
     """
     f = Flow(runs_dir, concurrency=concurrency, title=title, config=config,
-             memo=memo)
+             memo=memo, smoke=smoke)
     token = _current.set(f)
     try:
         yield f
@@ -82,8 +84,9 @@ def retry(fn, unit, *, check, max_attempts=3, feedback=None, after=(), name=None
 
 
 def each(fn, items, **kwargs):
-    """`[do(fn, x, **kwargs) for x in items]` — fan a list out into one task each."""
-    return [do(fn, x, **kwargs) for x in items]
+    """`[do(fn, x, **kwargs) for x in items]` — fan a list out into one task each.
+    In smoke mode (`flow(smoke=N)`) the list is truncated to N items."""
+    return [do(fn, x, **kwargs) for x in current()._truncate(items)]
 
 
 async def run(*, stop_when=None, refresh=False):
