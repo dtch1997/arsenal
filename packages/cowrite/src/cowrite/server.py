@@ -6,10 +6,19 @@ other files from the draft's own directory (with path-traversal blocked),
 POST /save atomically writes the edited Markdown to disk and returns freshly
 rendered HTML for the preview, and POST /revert restores the draft to its
 last-committed (git HEAD) state.
+
+Because cowrite is a CO-writing tool, the draft on disk can change under the
+editor at any time (the AI keeps writing between human saves). Every response
+therefore carries a `rev` — a hash of the draft's current on-disk content —
+and `/save` refuses (409) to write over a disk state the client hasn't seen,
+instead of silently reverting the other writer's work. `GET /api/state` is the
+cheap poll the page uses to notice external edits; `GET /api/doc` fetches the
+full document to refresh from.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import mimetypes
 import os
@@ -20,6 +29,11 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from .render import build_page, render_fragment
+
+
+def content_rev(text: str) -> str:
+    """Revision id for a draft state: a short content hash."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
 def git_head_text(draft: Path) -> tuple[str | None, str | None]:
@@ -63,6 +77,9 @@ def make_handler(draft: Path, title: str):
             return None
         return target if target.is_file() else None
 
+    def read_draft() -> str:
+        return draft.read_text(encoding="utf-8", errors="replace") if draft.exists() else ""
+
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *a):  # quiet; the launcher keeps its own log file
             pass
@@ -75,16 +92,26 @@ def make_handler(draft: Path, title: str):
             self.end_headers()
             self.wfile.write(body)
 
+        def _send_json(self, code: int, obj: dict) -> None:
+            self._send(code, json.dumps(obj).encode("utf-8"), "application/json")
+
         def do_GET(self):
             path = urlparse(self.path).path
             if path == "/":
-                md = draft.read_text(encoding="utf-8", errors="replace") if draft.exists() else ""
-                self._send(200, build_page(md, title, str(draft)).encode("utf-8"),
+                md = read_draft()
+                self._send(200, build_page(md, title, str(draft), content_rev(md)).encode("utf-8"),
                            "text/html; charset=utf-8")
                 return
             if path == "/api/raw":
-                md = draft.read_text(encoding="utf-8", errors="replace") if draft.exists() else ""
-                self._send(200, md.encode("utf-8"), "text/plain; charset=utf-8")
+                self._send(200, read_draft().encode("utf-8"), "text/plain; charset=utf-8")
+                return
+            if path == "/api/state":
+                self._send_json(200, {"rev": content_rev(read_draft())})
+                return
+            if path == "/api/doc":
+                md = read_draft()
+                self._send_json(200, {"md": md, "html": render_fragment(md),
+                                      "rev": content_rev(md)})
                 return
             asset = safe_asset(self.path)
             if asset is None:
@@ -105,6 +132,7 @@ def make_handler(draft: Path, title: str):
                 "ok": True,
                 "html": render_fragment(md),
                 "saved": md,
+                "rev": content_rev(md),
                 "at": datetime.now().strftime("%H:%M:%S"),
             }
 
@@ -114,26 +142,34 @@ def make_handler(draft: Path, title: str):
                 try:
                     n = int(self.headers.get("Content-Length", "0"))
                     md = self.rfile.read(n).decode("utf-8", errors="replace")
+                    # Optimistic concurrency: the client says which disk state
+                    # (rev) its edit is based on. If the draft changed on disk
+                    # since — the AI wrote to it — refuse rather than silently
+                    # revert that work; the client resolves and retries.
+                    base = self.headers.get("X-Base-Rev")
+                    disk = read_draft()
+                    if base is not None and base != content_rev(disk):
+                        self._send_json(409, {
+                            "ok": False, "conflict": True,
+                            "rev": content_rev(disk), "disk": disk,
+                            "error": "draft changed on disk since you last synced",
+                        })
+                        return
                     self._write_draft(md)
-                    self._send(200, json.dumps(self._saved_response(md)).encode("utf-8"),
-                               "application/json")
+                    self._send_json(200, self._saved_response(md))
                 except Exception as e:  # surface to the browser status line
-                    self._send(500, json.dumps({"ok": False, "error": str(e)}).encode("utf-8"),
-                               "application/json")
+                    self._send_json(500, {"ok": False, "error": str(e)})
                 return
             if path == "/revert":
                 try:
                     md, err = git_head_text(draft)
                     if err is not None:
-                        self._send(409, json.dumps({"ok": False, "error": err}).encode("utf-8"),
-                                   "application/json")
+                        self._send_json(409, {"ok": False, "error": err})
                         return
                     self._write_draft(md)
-                    self._send(200, json.dumps(self._saved_response(md)).encode("utf-8"),
-                               "application/json")
+                    self._send_json(200, self._saved_response(md))
                 except Exception as e:
-                    self._send(500, json.dumps({"ok": False, "error": str(e)}).encode("utf-8"),
-                               "application/json")
+                    self._send_json(500, {"ok": False, "error": str(e)})
                 return
             self._send(404, b'{"ok":false,"error":"unknown endpoint"}', "application/json")
 

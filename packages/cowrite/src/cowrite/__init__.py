@@ -9,5 +9,5 @@ many rounds.
 
 from .render import build_page, render_fragment
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = ["build_page", "render_fragment", "__version__"]

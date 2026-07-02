@@ -138,6 +138,7 @@ const status = document.getElementById('status');
 const saveBtn = document.getElementById('save');
 const revertBtn = document.getElementById('revert');
 let clean = src.value;          // last-saved content
+let rev = '__REV__';            // rev of the disk state this editor is based on
 let saving = false;
 
 function setStatus(text, cls) { status.textContent = text; status.className = 'status' + (cls ? ' ' + cls : ''); }
@@ -148,15 +149,30 @@ function applyRendered(data) {
   if (window.MathJax && MathJax.typesetPromise) { MathJax.typesetClear && MathJax.typesetClear([preview]); MathJax.typesetPromise([preview]); }
 }
 
-async function save() {
+async function save(baseRev) {
   if (saving || src.value === clean) { return; }
   saving = true; saveBtn.disabled = true; setStatus('saving…');
   try {
-    const r = await fetch('/save', { method: 'POST', headers: { 'Content-Type': 'text/plain; charset=utf-8' }, body: src.value });
+    const r = await fetch('/save', { method: 'POST',
+      headers: { 'Content-Type': 'text/plain; charset=utf-8', 'X-Base-Rev': baseRev || rev },
+      body: src.value });
     const data = await r.json();
+    if (r.status === 409 && data.conflict) {
+      // The co-writer (AI or another tab) saved a newer version after we last
+      // synced. Never clobber it silently — ask which version wins.
+      saving = false; saveBtn.disabled = false;
+      if (confirm('The draft changed on disk while you were editing (your co-writer ' +
+                  'saved a newer version).\\n\\nOK = overwrite it with YOUR version.\\n' +
+                  'Cancel = keep editing (the newer disk version stays).')) {
+        return save(data.rev);  // retry, based on the disk state we just saw
+      }
+      setStatus('⚠ newer version on disk', 'err');
+      return;
+    }
     if (!r.ok || !data.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
     applyRendered(data);
     clean = data.saved;
+    rev = data.rev;
     setStatus('✓ saved ' + data.at, 'saved');
   } catch (e) {
     setStatus('✗ ' + e.message, 'err');
@@ -165,11 +181,44 @@ async function save() {
   }
 }
 
+// The co-writer keeps editing the file between our saves: poll the disk rev,
+// and when it moves, refresh the editor (no local edits) or flag the
+// divergence (local edits in flight — the save-time conflict prompt decides).
+let pollBusy = false, pollFails = 0;
+async function pollDisk() {
+  if (pollBusy || saving) { return; }
+  pollBusy = true;
+  try {
+    const r = await fetch('/api/state');
+    const state = await r.json();
+    if (pollFails >= 3) { markDirty(); }  // recovered: clear the lost-connection status
+    pollFails = 0;
+    if (state.rev !== rev) {
+      if (src.value === clean) {
+        const doc = await (await fetch('/api/doc')).json();
+        const scroll = src.scrollTop;
+        src.value = doc.md; clean = doc.md; rev = doc.rev;
+        src.scrollTop = scroll;
+        applyRendered(doc);
+        setStatus('↻ updated from disk', 'saved');
+      } else {
+        // Keep `rev` at our base so the next save 409s and prompts.
+        setStatus('⚠ changed on disk — saving will ask', 'err');
+      }
+    }
+  } catch (e) {
+    if (++pollFails === 3) { setStatus('✗ lost connection to editor server', 'err'); }
+  } finally {
+    pollBusy = false;
+  }
+}
+setInterval(pollDisk, 2000);
+
 async function revert() {
   if (saving) { return; }
   const dirty = src.value !== clean;
   if (!confirm('Restore this draft to its last committed (git HEAD) version?' +
-               (dirty ? '\n\nUnsaved changes in the editor will be discarded.' : ''))) { return; }
+               (dirty ? '\\n\\nUnsaved changes in the editor will be discarded.' : ''))) { return; }
   saving = true; saveBtn.disabled = true; revertBtn.disabled = true; setStatus('reverting…');
   try {
     const r = await fetch('/revert', { method: 'POST' });
@@ -178,6 +227,7 @@ async function revert() {
     src.value = data.saved;
     applyRendered(data);
     clean = data.saved;
+    rev = data.rev;
     setStatus('↩ reverted ' + data.at, 'saved');
   } catch (e) {
     setStatus('✗ ' + e.message, 'err');
@@ -187,7 +237,7 @@ async function revert() {
 }
 
 src.addEventListener('input', markDirty);
-saveBtn.addEventListener('click', save);
+saveBtn.addEventListener('click', () => save());
 revertBtn.addEventListener('click', revert);
 document.addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') { e.preventDefault(); save(); }
@@ -245,13 +295,14 @@ gutter.addEventListener('dblclick', () => { editPane.style.removeProperty('--edi
 """
 
 
-def build_page(md_text: str, title: str, disk_path: str) -> str:
+def build_page(md_text: str, title: str, disk_path: str, rev: str) -> str:
     """Build the full editor HTML page for a draft."""
     css = _CHROME_CSS + "\n" + _PREVIEW_CSS + "\n" + _pygments_css()
     return (
         _PAGE.replace("__CSS__", css)
         .replace("__TITLE__", _html.escape(title))
         .replace("__PATH__", _html.escape(disk_path))
+        .replace("__REV__", rev)
         .replace("__MD__", _html.escape(md_text))
         .replace("__PREVIEW__", render_fragment(md_text))
     )

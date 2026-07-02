@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cowrite"
-version = "0.1.0"
+version = "0.2.0"
 description = "Co-write Markdown drafts with an AI in the browser — a live side-by-side editor with a save-to-disk round-trip, served over a Cloudflare quick tunnel."
 readme = "README.md"
 requires-python = ">=3.9"

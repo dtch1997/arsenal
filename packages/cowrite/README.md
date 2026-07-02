@@ -14,6 +14,14 @@ right.
 The editor is served over a [Cloudflare quick tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/),
 so it works even when the draft lives on a remote box. 
 
+Because the AI keeps writing the file *between* your saves, the editor stays
+**in sync with the disk**: it polls the draft's content revision, refreshes
+itself when the file changes under it (if you have no unsaved edits), and a
+save that would silently overwrite a newer on-disk version is refused with a
+conflict prompt instead — you choose which version wins. Without this, either
+side's save could silently revert the other's work, which looks exactly like
+"saving doesn't work".
+
 A **Revert to last commit** button restores the draft to its last-committed
 (`git HEAD`) version — handy when a round of edits went the wrong way. It asks
 for confirmation (warning if you have unsaved changes), writes the committed
