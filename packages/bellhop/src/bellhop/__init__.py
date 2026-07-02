@@ -13,7 +13,7 @@ from .errors import (
 )
 from .graphql import RunpodGraphQL
 from .modal_box import ModalConfig, Sandbox, sandbox
-from .pod import IMAGE_PRESETS, Pod, PodConfig, pod
+from .pod import GPU_ALIASES, IMAGE_PRESETS, Pod, PodConfig, pod
 from .probes import HttpProbe, LogMarkerProbe, ReadyProbe, SshProbe, TcpProbe
 from .rest import RunpodRest
 from .run import RunResult, RunSpec, run, run_many
@@ -23,7 +23,7 @@ __all__ = [
     "run", "run_many", "RunSpec", "RunResult",
     "open_box", "ExecBox", "ExecResult",
     # RunPod backend
-    "pod", "Pod", "PodConfig", "IMAGE_PRESETS",
+    "pod", "Pod", "PodConfig", "IMAGE_PRESETS", "GPU_ALIASES",
     "RunpodRest", "RunpodGraphQL",
     "ReadyProbe", "SshProbe", "TcpProbe", "HttpProbe", "LogMarkerProbe",
     # Modal backend

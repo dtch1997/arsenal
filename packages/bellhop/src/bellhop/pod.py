@@ -27,11 +27,40 @@ def _iso(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 # Image presets — kept inline so the library is standalone (no jarvis catalog).
+# "pytorch-cuda" is torch 2.4.0 + CUDA 12.4, kept in lockstep with the Modal
+# preset of the same name (modal_box._preset_image) so the key means the same
+# environment on either backend.
 IMAGE_PRESETS = {
     "cpu-base": "runpod/base:1.0.2-ubuntu2204",
     "pytorch-cuda": "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04",
     "pytorch-latest": "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404",
 }
+
+# Canonical GPU vocabulary — the Modal-style short names, expanded to the
+# RunPod gpuTypeIds that satisfy them. REST's ``gpuTypeIds`` takes the whole
+# candidate list (any match wins), so an alias also improves stock availability
+# over naming one exact SKU.
+GPU_ALIASES: dict[str, list[str]] = {
+    "A40": ["NVIDIA A40"],
+    "A100": ["NVIDIA A100 80GB PCIe", "NVIDIA A100-SXM4-80GB"],
+    "A100-80GB": ["NVIDIA A100 80GB PCIe", "NVIDIA A100-SXM4-80GB"],
+    "A6000": ["NVIDIA RTX A6000"],
+    "B200": ["NVIDIA B200"],
+    "H100": ["NVIDIA H100 80GB HBM3", "NVIDIA H100 PCIe", "NVIDIA H100 NVL"],
+    "H200": ["NVIDIA H200"],
+    "L4": ["NVIDIA L4"],
+    "L40": ["NVIDIA L40"],
+    "L40S": ["NVIDIA L40S"],
+    "RTX4090": ["NVIDIA GeForce RTX 4090"],
+    "RTX5090": ["NVIDIA GeForce RTX 5090"],
+}
+
+
+def _canon_gpu(name: str) -> str:
+    return name.upper().replace(" ", "").replace("_", "").replace("-", "")
+
+
+_ALIAS_LOOKUP = {_canon_gpu(k): v for k, v in GPU_ALIASES.items()}
 DEFAULT_GPU_IMAGE = IMAGE_PRESETS["pytorch-cuda"]
 DEFAULT_CPU_IMAGE = IMAGE_PRESETS["cpu-base"]
 
@@ -49,8 +78,9 @@ TAR_EXCLUDES = ["--exclude=.git", "--exclude=__pycache__", "--exclude=.venv",
 
 @dataclass
 class PodConfig:
-    compute: Literal["cpu", "gpu"] = "gpu"
-    gpu_id: str | None = None              # required when compute="gpu"
+    compute: Literal["cpu", "gpu"] | None = None   # derived from gpu/gpu_id when omitted
+    gpu: str | None = None                 # canonical short name ("A100", "H100", …) or full RunPod gpuTypeId; None = CPU
+    gpu_id: str | None = None              # verbatim RunPod gpuTypeId (legacy spelling of gpu=)
     gpu_count: int = 1
     image: str | None = None               # free-form; wins over preset
     image_preset: str | None = None        # key into IMAGE_PRESETS
@@ -74,6 +104,37 @@ class PodConfig:
     # stop = halt compute (disk persists); terminate = delete (all billing stops).
     stop_after: timedelta | None = timedelta(hours=24)
     terminate_after: timedelta | None = timedelta(hours=72)
+    # unified spelling of the hard kill, same name as ModalConfig.max_lifetime;
+    # wins over terminate_after when set.
+    max_lifetime: timedelta | None = None
+
+    def __post_init__(self):
+        if self.max_lifetime is not None:
+            self.terminate_after = self.max_lifetime
+
+    @property
+    def resolved_compute(self) -> str:
+        if self.compute:
+            return self.compute
+        return "gpu" if (self.gpu or self.gpu_id) else "cpu"
+
+    def resolve_gpu_ids(self) -> list[str]:
+        """The RunPod gpuTypeIds this config asks for, in preference order."""
+        if self.gpu and self.gpu_id:
+            raise PreflightError("set gpu= (canonical name) or gpu_id= (verbatim RunPod id), not both")
+        if self.gpu_id:
+            return [self.gpu_id]
+        if not self.gpu:
+            raise PreflightError("gpu required when compute='gpu' (e.g. gpu='A100')")
+        hit = _ALIAS_LOOKUP.get(_canon_gpu(self.gpu))
+        if hit:
+            return list(hit)
+        if self.gpu.upper().startswith(("NVIDIA", "AMD", "TESLA")):
+            return [self.gpu]  # full RunPod gpuTypeId, pass verbatim
+        raise PreflightError(
+            f"unknown gpu {self.gpu!r}; known aliases: {sorted(GPU_ALIASES)} "
+            "(a full RunPod gpuTypeId like 'NVIDIA GeForce RTX 4090' also works)"
+        )
 
     def resolve_image(self) -> str:
         if self.image:
@@ -85,7 +146,7 @@ class PodConfig:
                 raise PreflightError(
                     f"unknown image_preset {self.image_preset!r} (have {list(IMAGE_PRESETS)})"
                 )
-        return DEFAULT_GPU_IMAGE if self.compute == "gpu" else DEFAULT_CPU_IMAGE
+        return DEFAULT_GPU_IMAGE if self.resolved_compute == "gpu" else DEFAULT_CPU_IMAGE
 
     def resolve_ssh_key(self) -> str:
         key = self.ssh_key or os.path.expanduser("~/.ssh/id_ed25519")
@@ -100,8 +161,6 @@ class PodConfig:
         return Path(pub).read_text().strip()
 
     def to_create_body(self) -> dict:
-        if self.compute == "gpu" and not self.gpu_id:
-            raise PreflightError("gpu_id required when compute='gpu'")
         env = dict(self.env)
         env.setdefault("PUBLIC_KEY", self.pubkey_text())  # RunPod injects into authorized_keys
         body: dict = {
@@ -112,8 +171,8 @@ class PodConfig:
             "ports": self.ports,
             "env": env,
         }
-        if self.compute == "gpu":
-            body["gpuTypeIds"] = [self.gpu_id]
+        if self.resolved_compute == "gpu":
+            body["gpuTypeIds"] = self.resolve_gpu_ids()
             body["gpuCount"] = self.gpu_count
         else:
             body["computeType"] = "CPU"
@@ -125,21 +184,22 @@ class PodConfig:
     def has_ttl(self) -> bool:
         return bool(self.stop_after or self.terminate_after)
 
-    def to_graphql_input(self) -> dict:
+    def to_graphql_input(self, gpu_type_id: str | None = None) -> dict:
         """Input for podFindAndDeployOnDemand — the only create path with TTL.
 
-        Note the GraphQL shape differs from REST: gpuTypeId is singular, ports
-        is a comma-joined string, and env is a list of {key, value} objects.
+        Note the GraphQL shape differs from REST: gpuTypeId is singular (pass
+        ``gpu_type_id`` to pick one candidate; default is the first), ports is
+        a comma-joined string, and env is a list of {key, value} objects.
         """
-        if self.compute != "gpu" or not self.gpu_id:
-            raise PreflightError("native TTL (stop_after/terminate_after) requires compute='gpu' + gpu_id")
+        if self.resolved_compute != "gpu":
+            raise PreflightError("native TTL (stop_after/terminate_after) requires a GPU box (set gpu= or gpu_id=)")
         env = dict(self.env)
         env.setdefault("PUBLIC_KEY", self.pubkey_text())
         inp: dict = {
             "cloudType": self.cloud,
             "name": self.name,
             "imageName": self.resolve_image(),
-            "gpuTypeId": self.gpu_id,
+            "gpuTypeId": gpu_type_id or self.resolve_gpu_ids()[0],
             "gpuCount": self.gpu_count,
             "containerDiskInGb": self.container_disk_gb,
             "ports": ",".join(self.ports),
@@ -306,15 +366,25 @@ async def _run_shell(pipeline: str, what: str) -> None:
 
 
 async def _gql_create(config: PodConfig, api_key: str | None) -> dict:
+    # GraphQL's gpuTypeId is singular (unlike REST's gpuTypeIds list), so an
+    # alias like gpu="A100" is tried candidate-by-candidate, then again on the
+    # fallback cloud.
+    candidates = config.resolve_gpu_ids()
+    clouds = [config.cloud]
+    if config.cloud == "COMMUNITY" and config.cloud_fallback:
+        clouds.append("SECURE")
     async with RunpodGraphQL(api_key=api_key) as gql:
-        gi = config.to_graphql_input()
-        try:
-            return await gql.create_pod_on_demand(gi)
-        except ProvisionError:
-            if config.cloud == "COMMUNITY" and config.cloud_fallback:
-                gi["cloudType"] = "SECURE"
-                return await gql.create_pod_on_demand(gi)
-            raise
+        last_err: ProvisionError | None = None
+        for cloud in clouds:
+            for gid in candidates:
+                gi = config.to_graphql_input(gpu_type_id=gid)
+                gi["cloudType"] = cloud
+                try:
+                    return await gql.create_pod_on_demand(gi)
+                except ProvisionError as e:
+                    last_err = e
+        assert last_err is not None
+        raise last_err
 
 
 @contextlib.asynccontextmanager
@@ -326,7 +396,7 @@ async def pod(config: PodConfig, *, keep: bool = False,
     unless ``keep=True``.
     """
     async with RunpodRest(api_key=api_key) as rest:
-        if config.has_ttl() and config.compute == "gpu":
+        if config.has_ttl() and config.resolved_compute == "gpu":
             # Native server-side TTL is GraphQL-only (and on-demand = GPU only).
             created = await _gql_create(config, api_key)
         else:

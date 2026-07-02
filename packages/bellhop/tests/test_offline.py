@@ -47,6 +47,71 @@ def test_gpu_requires_gpu_id(tmp_path, monkeypatch):
         cfg.to_create_body()
 
 
+# --- unified gpu= vocabulary -------------------------------------------------
+
+def test_gpu_alias_expands_to_candidate_list():
+    assert _cfg(gpu="A100").resolve_gpu_ids() == [
+        "NVIDIA A100 80GB PCIe", "NVIDIA A100-SXM4-80GB"]
+    # normalization: case / dashes / spaces don't matter
+    assert _cfg(gpu="a100").resolve_gpu_ids() == _cfg(gpu="A-100").resolve_gpu_ids()
+    assert _cfg(gpu="rtx 4090").resolve_gpu_ids() == ["NVIDIA GeForce RTX 4090"]
+
+
+def test_gpu_full_runpod_id_passes_verbatim():
+    assert _cfg(gpu="NVIDIA GeForce RTX 4090").resolve_gpu_ids() == ["NVIDIA GeForce RTX 4090"]
+
+
+def test_gpu_unknown_short_name_raises():
+    with pytest.raises(PreflightError, match="known aliases"):
+        _cfg(gpu="Z9000").resolve_gpu_ids()
+
+
+def test_gpu_and_gpu_id_both_set_raises():
+    with pytest.raises(PreflightError, match="not both"):
+        _cfg(gpu="A100", gpu_id="NVIDIA A100 80GB PCIe").resolve_gpu_ids()
+
+
+def test_compute_derived_from_gpu():
+    assert _cfg().resolved_compute == "cpu"                    # no gpu -> CPU box
+    assert _cfg(gpu="A100").resolved_compute == "gpu"
+    assert _cfg(gpu_id="NVIDIA L4").resolved_compute == "gpu"
+    assert _cfg(compute="cpu", ).resolved_compute == "cpu"     # explicit wins
+    assert _cfg(compute="gpu", gpu_id="x").resolved_compute == "gpu"
+
+
+def test_create_body_uses_alias_candidates(tmp_path):
+    key = tmp_path / "id"
+    key.write_text("x")
+    (tmp_path / "id.pub").write_text("ssh-ed25519 AAAA test")
+    body = _cfg(gpu="H100", ssh_key=str(key)).to_create_body()
+    assert body["gpuTypeIds"] == [
+        "NVIDIA H100 80GB HBM3", "NVIDIA H100 PCIe", "NVIDIA H100 NVL"]
+
+
+def test_graphql_input_takes_candidate_override(tmp_path):
+    key = tmp_path / "id"
+    key.write_text("x")
+    (tmp_path / "id.pub").write_text("ssh-ed25519 AAAA test")
+    cfg = _cfg(gpu="A100", ssh_key=str(key))
+    assert cfg.to_graphql_input()["gpuTypeId"] == "NVIDIA A100 80GB PCIe"
+    assert cfg.to_graphql_input(gpu_type_id="NVIDIA A100-SXM4-80GB")["gpuTypeId"] == "NVIDIA A100-SXM4-80GB"
+
+
+# --- unified max_lifetime= ---------------------------------------------------
+
+def test_max_lifetime_maps_to_terminate_after():
+    cfg = _cfg(gpu="A100", max_lifetime=timedelta(hours=8))
+    assert cfg.terminate_after == timedelta(hours=8)
+    # survives dataclasses.replace (run() re-names the config per slug)
+    from dataclasses import replace
+    assert replace(cfg, name="x").terminate_after == timedelta(hours=8)
+
+
+def test_max_lifetime_maps_to_modal_timeout():
+    kw = _create_kwargs(ModalConfig(max_lifetime=timedelta(hours=8)))
+    assert kw["timeout"] == 8 * 3600
+
+
 def test_create_body_shape(tmp_path):
     key = tmp_path / "id"
     key.write_text("x")

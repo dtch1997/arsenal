@@ -29,8 +29,7 @@ async def _run():
         gcs_base="gs://alignment-team-general-storage/daniel/jarvis/experiments",
     )
     cfg = PodConfig(
-        compute="gpu",
-        gpu_id="NVIDIA GeForce RTX 4090",
+        gpu="RTX4090",   # exercises the canonical-alias path end-to-end
         cloud="COMMUNITY",
         container_disk_gb=20,
         ready=SshProbe("true"),

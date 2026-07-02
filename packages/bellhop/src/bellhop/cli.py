@@ -33,20 +33,33 @@ def _parser() -> argparse.ArgumentParser:
     r.add_argument("--no-gcs", action="store_true", help="skip GCS upload")
     r.add_argument("--env-json", default=None, help="JSON object of extra box env vars")
     r.add_argument("--keep-pod", action="store_true", help="leave the box up after the run")
+    r.add_argument("--gpu", default=None,
+                   help="GPU short name, e.g. 'A100', 'H100', 'L4' (both backends; omit for a CPU box). "
+                        "RunPod also accepts a full gpuTypeId like 'NVIDIA GeForce RTX 4090'.")
+    r.add_argument("--max-lifetime-hours", type=float, default=None,
+                   help="hard max box lifetime (both backends; default: config default)")
     # RunPod-specific
-    r.add_argument("--compute", choices=["cpu", "gpu"], default="cpu")
-    r.add_argument("--gpu-id", default=None, help="RunPod GPU, e.g. 'NVIDIA GeForce RTX 4090'")
+    r.add_argument("--compute", choices=["cpu", "gpu"], default=None, help="RunPod: derived from --gpu when omitted")
+    r.add_argument("--gpu-id", default=None, help="[deprecated] verbatim RunPod gpuTypeId; use --gpu")
     r.add_argument("--container-disk-gb", type=int, default=20)
     r.add_argument("--cloud", choices=["SECURE", "COMMUNITY"], default="COMMUNITY")
     r.add_argument("--ready-timeout", type=int, default=420)
     # Modal-specific
-    r.add_argument("--gpu", default=None, help="Modal GPU, e.g. 'A10G', 'A100', 'H100', 'T4', 'L4'")
     r.add_argument("--pip", action="append", default=None, help="Modal: pip-install onto the image (repeatable)")
-    r.add_argument("--timeout-hours", type=float, default=24.0, help="Modal sandbox hard max lifetime")
+    r.add_argument("--timeout-hours", type=float, default=None, help="[deprecated] use --max-lifetime-hours")
     return p
 
 
 def _build_backend(args, env: dict):
+    max_lifetime = None
+    if args.max_lifetime_hours is not None:
+        max_lifetime = timedelta(hours=args.max_lifetime_hours)
+    elif args.timeout_hours is not None:
+        print("warning: --timeout-hours is deprecated; use --max-lifetime-hours", file=sys.stderr)
+        max_lifetime = timedelta(hours=args.timeout_hours)
+    if args.gpu_id:
+        print("warning: --gpu-id is deprecated; use --gpu", file=sys.stderr)
+
     if args.backend == "modal":
         return ModalConfig(
             gpu=args.gpu,
@@ -54,10 +67,11 @@ def _build_backend(args, env: dict):
             image_preset=args.image_preset,
             pip=list(args.pip or []),
             env=dict(env),
-            timeout=timedelta(hours=args.timeout_hours),
+            max_lifetime=max_lifetime,
         )
     return PodConfig(
         compute=args.compute,
+        gpu=args.gpu,
         gpu_id=args.gpu_id,
         image=args.image,
         image_preset=args.image_preset,
@@ -65,6 +79,7 @@ def _build_backend(args, env: dict):
         cloud=args.cloud,
         env=dict(env),
         ready_timeout=timedelta(seconds=args.ready_timeout),
+        max_lifetime=max_lifetime,
     )
 
 

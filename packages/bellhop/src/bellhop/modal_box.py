@@ -67,6 +67,13 @@ class ModalConfig:
     # native server-side TTL (plain create kwargs; survive host death)
     timeout: timedelta | None = timedelta(hours=24)   # hard max lifetime
     idle_timeout: timedelta | None = None             # terminate after this much inactivity
+    # unified spelling of the hard kill, same name as PodConfig.max_lifetime;
+    # wins over timeout when set.
+    max_lifetime: timedelta | None = None
+
+    def __post_init__(self):
+        if self.max_lifetime is not None:
+            self.timeout = self.max_lifetime
 
     def resolve_image(self):
         """Build the modal.Image for this config (lazy-imports modal)."""
@@ -99,8 +106,11 @@ def _preset_image(modal, key: str):
     if key == "debian-slim":
         return modal.Image.debian_slim()
     if key == "pytorch-cuda":
+        # torch 2.4.0 + CUDA 12.4 — kept in lockstep with the RunPod preset of
+        # the same name (pod.IMAGE_PRESETS) so the key means the same
+        # environment on either backend.
         return modal.Image.from_registry(
-            "pytorch/pytorch:2.4.0-cuda12.1-cudnn9-runtime"
+            "pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime"
         )
     raise PreflightError(f"unknown modal image_preset {key!r} (have {list(_PRESETS)})")
 

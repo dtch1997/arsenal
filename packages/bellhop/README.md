@@ -14,7 +14,7 @@ import asyncio
 from bellhop import pod, PodConfig
 
 async def main():
-    async with pod(PodConfig(compute="gpu", gpu_id="NVIDIA GeForce RTX 4090")) as p:
+    async with pod(PodConfig(gpu="RTX4090")) as p:
         await p.push("./mycode", "/workspace/job")
         r = await p.exec("cd /workspace/job && python train.py")
         print(r.stdout)
@@ -64,15 +64,32 @@ async with sandbox(ModalConfig(gpu="A10G")) as b:   # CPU box: omit gpu
 # sandbox terminated on exit (pass keep=True to leave it up)
 ```
 
-What differs between the two:
+The whole common surface is spelled the same on both configs:
+
+- **`gpu=`** — a canonical short name (`"A100"`, `"H100"`, `"L4"`, …); `None`
+  means a CPU box. On RunPod the name expands through `GPU_ALIASES` to the
+  *list* of matching gpuTypeIds (e.g. `"A100"` → PCIe *and* SXM), which the
+  REST API accepts wholesale — better stock availability than naming one SKU.
+  A full RunPod id (`"NVIDIA GeForce RTX 4090"`) still passes verbatim.
+- **`max_lifetime=`** — the hard server-side kill switch, `timedelta` on both
+  (maps to `terminate_after` on RunPod, `timeout` on Modal).
+- **`image=` / `image_preset=`** — the `pytorch-cuda` preset is pinned to the
+  same torch 2.4.0 + CUDA 12.4 environment on both backends.
+
+What genuinely differs stays backend-specific:
 
 | | RunPod (`PodConfig`, `pod()`) | Modal (`ModalConfig`, `sandbox()`) |
 |---|---|---|
-| GPU vocab | `gpu_id="NVIDIA GeForce RTX 4090"` | `gpu="A10G"` / `"A100"` / `"H100"` … |
-| Image | docker ref / `image_preset` (pytorch-cuda…) | `modal.Image`, registry string, or `image_preset` (`debian-slim`, `pytorch-cuda`); plus `pip=`/`apt=` |
 | Readiness | SSH/probe wait (below) | none — `create()` returns an execable box |
-| Native TTL | `stop_after` / `terminate_after` (GraphQL) | `timeout` (hard kill) / `idle_timeout` |
+| Extra TTL | `stop_after` (wall-clock compute halt) | `idle_timeout` (kill after inactivity) |
+| Image extras | — | `pip=` / `apt=`, `modal.Image`, `secrets=`, `volumes=` |
+| Placement | `cloud=` SECURE/COMMUNITY (+fallback) | `region=`, `cpu=`, `memory=` |
 | Auth | `RUNPOD_API_KEY` + SSH keypair | Modal token (`modal token new`) |
+
+(`stop_after` and `idle_timeout` are deliberately *not* unified — one is a
+wall-clock timer, the other an inactivity timer; pretending they're the same
+concept would be a trap. `gpu_id=` remains as a legacy spelling of a verbatim
+RunPod id.)
 
 ## "Return when functional" — the hard part (RunPod only)
 
@@ -100,7 +117,7 @@ probe step on that backend.)
 Keep one pod alive and run many steps against it:
 
 ```python
-async with pod(PodConfig(compute="gpu", gpu_id="NVIDIA GeForce RTX 4090")) as p:
+async with pod(PodConfig(gpu="RTX4090")) as p:
     await p.push("./code", "/workspace/job")
     await p.exec("cd /workspace/job && python train.py", env={"HF_TOKEN": tok})
     await p.exec("python eval.py")                  # same pod, no re-provision
@@ -117,7 +134,7 @@ from bellhop import run, RunSpec, PodConfig
 
 res = asyncio.run(run(
     RunSpec(slug="demo", codebase="./mycode", run="python go.py"),
-    PodConfig(compute="gpu", gpu_id="NVIDIA GeForce RTX 4090"),
+    PodConfig(gpu="A100"),      # ModalConfig(gpu="A100") runs the same pipeline on Modal
 ))
 print(res.remote_exit, res.local_results)
 ```
@@ -128,14 +145,12 @@ dir back → optionally uploads to GCS → tears down → returns a `RunResult`.
 a `ModalConfig` instead of a `PodConfig` to run the exact same pipeline on a
 Modal sandbox.
 
-CLI equivalent (RunPod, then the Modal form):
+CLI equivalent — the same `--gpu` flag works on both backends (omit it for a
+CPU box):
 
 ```bash
-bellhop run --slug demo --codebase ./mycode --run "python go.py" \
-            --compute gpu --gpu-id "NVIDIA GeForce RTX 4090"
-
-bellhop run --backend modal --slug demo --codebase ./mycode --run "python go.py" \
-            --gpu A10G
+bellhop run --slug demo --codebase ./mycode --run "python go.py" --gpu A100
+bellhop run --backend modal --slug demo --codebase ./mycode --run "python go.py" --gpu A100
 ```
 
 ### Fan out a sweep
@@ -187,6 +202,11 @@ On the **Modal** backend the equivalents are first-class `create` kwargs:
 `ModalConfig(timeout=timedelta(hours=24))` is the hard max lifetime and
 `idle_timeout=timedelta(minutes=30)` terminates the sandbox after inactivity —
 no GraphQL detour, and they apply to CPU and GPU sandboxes alike.
+
+The backend-agnostic spelling of the hard kill is
+**`max_lifetime=timedelta(...)`** — set it on either config (or
+`--max-lifetime-hours` on the CLI) and it maps to `terminate_after` on RunPod
+and `timeout` on Modal, taking precedence over those fields.
 
 ## Optional: persist results to GCS
 
