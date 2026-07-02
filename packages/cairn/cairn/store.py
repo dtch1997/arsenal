@@ -123,6 +123,19 @@ class Store:
     def _save(self, issue: Issue) -> None:
         self._write_json(self._issue_path(issue.id), issue.to_dict())
 
+    def put(self, issue: Issue, *, overwrite: bool = True) -> bool:
+        """Write an issue verbatim, id and all (used by import).
+
+        Unlike ``create``, this preserves ``issue.id`` rather than minting one,
+        so external ids survive a migration. Returns True if written, False if
+        ``overwrite`` is False and an issue with that id already exists.
+        """
+        if not overwrite and self.exists(issue.id):
+            return False
+        self.issues_dir.mkdir(parents=True, exist_ok=True)
+        self._save(issue)
+        return True
+
     def get(self, issue_id: str) -> Issue:
         data = self._read_json(self._issue_path(issue_id))
         if data is None:

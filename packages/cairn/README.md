@@ -92,6 +92,26 @@ Priorities run `P0` (most urgent) to `P3` (least). Status is `open`,
 `in_progress`, or `closed`. Type is free-form; `task`, `bug`, `epic`, `chore`,
 `note` are the advertised ones.
 
+## Migrating from Beads (`bd`)
+
+If you already track work with [Beads](https://github.com/gastownhall/beads),
+import its export in one shot:
+
+```bash
+bd export                             # writes .beads/issues.jsonl
+cairn init                            # if you don't have a .cairn/ yet
+cairn import .beads/issues.jsonl      # one .cairn/issues/<id>.json per issue
+cairn ready                           # should match `bd ready`
+```
+
+Beads ids are preserved verbatim (e.g. `stg-teu.2`) so parent/blocked-by edges
+survive the move. `acceptance_criteria` and `notes` are folded into cairn's
+`description`; Beads' P0–P4 priority clamps onto cairn's P0–P3; `parent-child`
+deps become `parent` and `blocks` deps become `blocked_by` (other dep types are
+dropped). Pass `--skip-existing` to keep issues you've already got. Beads-only
+features (federation, tracker sync, compaction) have no cairn equivalent and are
+simply not carried over.
+
 ## Using it from an agent
 
 Point your agent at cairn by adding a short section to its instructions file

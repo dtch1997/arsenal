@@ -12,6 +12,7 @@ import json
 import sys
 
 from . import __version__
+from .beads import import_beads
 from .models import Issue, KNOWN_TYPES, MAX_PRIORITY, MIN_PRIORITY, Status
 from .store import DEFAULT_PREFIX, CairnError, Store
 
@@ -192,6 +193,22 @@ def _cmd_dep(args) -> int:
     return 0
 
 
+def _cmd_import(args) -> int:
+    store = Store.discover()
+    result = import_beads(store, args.path, skip_existing=args.skip_existing)
+    if args.json:
+        print(
+            json.dumps(
+                {"imported": result.imported, "skipped": result.skipped, "ids": result.ids},
+                indent=2,
+            )
+        )
+    else:
+        print(f"imported {result.imported} issue(s) from {args.path}", end="")
+        print(f" (skipped {result.skipped} existing)" if result.skipped else "")
+    return 0
+
+
 def _cmd_remember(args) -> int:
     store = Store.discover()
     store.remember(args.text)
@@ -319,6 +336,16 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--parent", help="set parent id (empty string clears)")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=_cmd_dep)
+
+    sp = sub.add_parser("import", help="import issues from a Beads issues.jsonl export")
+    sp.add_argument("path", help="path to a Beads .beads/issues.jsonl file")
+    sp.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help="keep existing issues of the same id instead of overwriting",
+    )
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=_cmd_import)
 
     sp = sub.add_parser("remember", help="store a durable project note")
     sp.add_argument("text")
