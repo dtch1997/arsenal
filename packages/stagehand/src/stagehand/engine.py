@@ -41,6 +41,7 @@ from typing import (Any, Generic, TypeVar, Union,
 
 from .monitor import monitor as _monitor, mark
 from .manifest import write_manifest
+from .memo import Memo, fn_fingerprint, memo_key
 from ._log import log
 
 # The monitor of the task currently running on this asyncio task — lets a step
@@ -96,6 +97,8 @@ class Task:
     state: str = PENDING
     result: object = None
     error: object = None
+    fn: object = None                 # the user step fn, for the memo fingerprint
+    static: object = None             # declared non-dep inputs (map item, spawn args)
 
 
 class Handle(Generic[T]):
@@ -185,11 +188,17 @@ class Flow:
     """A DAG of work. Declare nodes with `map`/`filter`/`reduce`/`expand`/`add`,
     then `await flow.run()`."""
 
-    def __init__(self, runs_dir=None, *, concurrency=8, title="flow", config=None):
+    def __init__(self, runs_dir=None, *, concurrency=8, title="flow", config=None,
+                 memo=None):
         self.runs_dir = Path(runs_dir) if runs_dir is not None else None
         self.concurrency = concurrency
         self.title = title
         self.config = config      # JSON-serializable; snapshotted into manifest.json
+        # memo: a `Memo` (or a directory for one) enabling content-keyed step
+        # memoization — see stagehand.memo. None (default) = every task runs.
+        self.memo = Memo(memo) if isinstance(memo, (str, Path)) else memo
+        self._refresh = False
+        self._node_cache: dict[str, bool] = {}  # node -> participate in memo?
         self.tasks: dict[str, Task] = {}
         self.results: dict[str, object] = {}
         self._counter: dict[str, int] = {}
@@ -208,10 +217,12 @@ class Flow:
         return f"{node}/{i}"
 
     # ---- surface --------------------------------------------------------- #
-    def map(self, node, source, fn, *, concurrency=None):
+    def map(self, node, source, fn, *, concurrency=None, cache=True):
         """One task per item of `source` (a static iterable or an upstream handle),
-        each running `fn(item)`; results stream into the returned handle."""
+        each running `fn(item)`; results stream into the returned handle.
+        `cache=False` exempts this node from memoization (see `Flow(memo=…)`)."""
         self._node_kind[node] = "map"
+        self._node_cache[node] = cache
         if concurrency:
             self._node_conc[node] = concurrency
         out = Handle(self, node, elem_type=_ret(fn))
@@ -220,7 +231,7 @@ class Flow:
             tid = self._tid(node)
             async def run(results, up_id=up_id):
                 return await _call(fn, results[up_id])
-            self.tasks[tid] = Task(tid, node, (up_id,), run)
+            self.tasks[tid] = Task(tid, node, (up_id,), run, fn=fn)
             out.add(tid)
 
         if isinstance(source, Handle):
@@ -232,19 +243,21 @@ class Flow:
                 tid = self._tid(node)
                 async def run(results, item=item):
                     return await _call(fn, item)
-                self.tasks[tid] = Task(tid, node, (), run)
+                self.tasks[tid] = Task(tid, node, (), run, fn=fn, static=item)
                 out.add(tid)
             out.close()
         return out
 
-    def filter(self, node, source, pred, *, concurrency=None):
+    def filter(self, node, source, pred, *, concurrency=None, cache=True):
         """Like `map`, but each item runs `pred` and only survivors propagate.
 
         `pred(item) -> bool` or `-> (ok, issues)` (a gate predicate). A pruned item
         is marked `failed` ("filtered: …") on the dashboard, and any task that
-        depended on it is skipped.
+        depended on it is skipped. Only survivals memoize (a pruned item is a
+        failure), so pruned items re-evaluate on re-run.
         """
         self._node_kind[node] = "filter"
+        self._node_cache[node] = cache
         if concurrency:
             self._node_conc[node] = concurrency
         src_elem = source.elem_type if isinstance(source, Handle) else Any
@@ -254,7 +267,7 @@ class Flow:
             tid = self._tid(node)
             async def run(results, up_id=up_id):
                 return _apply_pred(pred, results[up_id])
-            self.tasks[tid] = Task(tid, node, (up_id,), run)
+            self.tasks[tid] = Task(tid, node, (up_id,), run, fn=pred)
             out.add(tid)
 
         if isinstance(source, Handle):
@@ -266,16 +279,17 @@ class Flow:
                 tid = self._tid(node)
                 async def run(results, item=item):
                     return _apply_pred(pred, item)
-                self.tasks[tid] = Task(tid, node, (), run)
+                self.tasks[tid] = Task(tid, node, (), run, fn=pred, static=item)
                 out.add(tid)
             out.close()
         return out
 
-    def reduce(self, node, source, fn):
+    def reduce(self, node, source, fn, *, cache=True):
         """A single barrier task that runs `fn(list_of_results)` once *all* of
         `source`'s tasks are terminal — over the survivors (skipped/failed deps are
         dropped from the list). The one place a barrier is intended."""
         self._node_kind[node] = "reduce"
+        self._node_cache[node] = cache
         out = Handle(self, node, kind="one", elem_type=_ret(fn))
         if isinstance(source, Handle):
             self._edges.add((source.node, node))
@@ -288,7 +302,7 @@ class Flow:
                 vals = [results[i] for i in dep_ids if i in results]
                 r = fn(vals)
                 return await r if inspect.isawaitable(r) else r
-            self.tasks[tid] = Task(tid, node, tuple(dep_ids), run, gather=True)
+            self.tasks[tid] = Task(tid, node, tuple(dep_ids), run, gather=True, fn=fn)
             out.add(tid)
             out.close()
 
@@ -303,7 +317,7 @@ class Flow:
             async def run(results, items=items):
                 r = fn(items)
                 return await r if inspect.isawaitable(r) else r
-            self.tasks[tid] = Task(tid, node, (), run)
+            self.tasks[tid] = Task(tid, node, (), run, fn=fn, static=items)
             out.add(tid)
             out.close()
         return out
@@ -344,12 +358,13 @@ class Flow:
         source.subscribe(on_id=on_id, on_close=on_close)
         return out
 
-    def add(self, id, fn, *, deps=(), node=None):
+    def add(self, id, fn, *, deps=(), node=None, cache=True):
         """Raw escape hatch: a single task `id` running `fn(*dep_results)` after the
         given dependency task ids. For irregular graphs the templates don't cover."""
         node = node or id
         deps = tuple(deps)
         self._node_kind.setdefault(node, "task")
+        self._node_cache[node] = cache
         for d in deps:
             if d in self.tasks:
                 self._edges.add((self.tasks[d].node, node))
@@ -357,14 +372,14 @@ class Flow:
             args = [results[d] for d in deps]
             r = fn(*args)
             return await r if inspect.isawaitable(r) else r
-        self.tasks[id] = Task(id, node, deps, run)
+        self.tasks[id] = Task(id, node, deps, run, fn=fn)
         out = Handle(self, node, kind="one", elem_type=_ret(fn))
         out.add(id)
         out.close()
         return out
 
     def spawn(self, fn, args=(), kwargs=None, *, name=None, after=(), gather=None,
-              type_fn=None):
+              type_fn=None, cache=True):
         """Add a single task running `fn(*args, **kwargs)`, where any `Handle` found
         in `args`/`kwargs` (even nested in lists/tuples/dicts) becomes a dependency
         and is substituted with its result at run time. `after` is extra ordering-
@@ -388,6 +403,7 @@ class Flow:
             # arg; separate scalar handle args are all-required (skip if any fails).
             gather = nested or any(h.kind == "many" for h in dep_handles)
         self._node_kind.setdefault(node, "gather" if gather else "task")
+        self._node_cache[node] = cache
         for h in dep_handles:
             self._edges.add((h.node, node))
         self._record_spawn(node, type_fn, args, kwargs)
@@ -397,7 +413,10 @@ class Flow:
             kw = _resolve(kwargs, results)
             r = fn(*a, **kw)
             return await r if inspect.isawaitable(r) else r
-        self.tasks[tid] = Task(tid, node, dep_ids, run, gather=gather)
+        # static key part: the declared args with handles as placeholders (their
+        # values enter the key via dep results)
+        self.tasks[tid] = Task(tid, node, dep_ids, run, gather=gather, fn=fn,
+                               static=_placeholders((args, kwargs)))
         out = Handle(self, node, kind="one", elem_type=_ret(type_fn))
         out.add(tid)
         out.close()
@@ -465,16 +484,19 @@ class Flow:
         return []
 
     # ---- scheduler ------------------------------------------------------- #
-    async def run(self, *, stop_when=None, check=False):
+    async def run(self, *, stop_when=None, check=False, refresh=False):
         """Schedule the whole graph, streaming and bounded by `concurrency`.
 
         `stop_when(state) -> bool` is checked after every completion; when it
         returns truthy, in-flight tasks are cancelled and the run stops early.
         With `check=True`, run `self.check()` first (raise before doing any work if
-        the graph is malformed). Returns the final `RunState`.
+        the graph is malformed). With a memo store, `refresh=True` ignores cached
+        results (but still records fresh ones) — the explicit "new experiment"
+        act for nondeterministic steps. Returns the final `RunState`.
         """
         if check:
             self.check()
+        self._refresh = refresh
         self._start = time.time()
         if self.runs_dir is not None:
             self._flush_graph()
@@ -545,12 +567,46 @@ class Flow:
                     changed = True
                     log.debug("∅ %s skipped (upstream %s)", t.id, dead[0])
 
+    def _memo_key(self, t):
+        """The task's memo key, or None when it can't participate (no store, node
+        opted out, no user fn to fingerprint). Called once deps are done, so the
+        key hashes their result *values* — not their ids."""
+        if (self.memo is None or t.fn is None or t.run is None
+                or not self._node_cache.get(t.node, True)):
+            return None
+        dep_vals = [self.results.get(d, "<absent>") for d in t.deps]
+        try:
+            return memo_key(fn_fingerprint(t.fn), t.static, dep_vals)
+        except Exception:                       # unkeyable ⇒ just run it
+            return None
+
+    def _finish(self, t, r, path):
+        t.result = r
+        t.state = DONE
+        self.results[t.id] = r
+        for cb in self._on_done.get(t.id, ()):   # dynamic fan-out hooks
+            cb(r)
+
     async def _run_task(self, t):
         async with self._acquire(t):
             path = None
             if self.runs_dir is not None:
                 leaf = t.id.split("/")[-1]
                 path = self.runs_dir / t.node / f"{leaf}.progress.json"
+            key = self._memo_key(t)
+            if key is not None and not self._refresh:
+                hit, cached = self.memo.get(key)
+                if hit:
+                    log.debug("≡ %s cached (%s)", t.id, key[:8])
+                    if path is not None:
+                        with _monitor(t.id, 1, path, parent=t.node,
+                                      meta={"node": t.node, "deps": list(t.deps),
+                                            "cached": True}, min_interval=0) as m:
+                            m.update()
+                    self._finish(t, cached, path)
+                    if self.runs_dir is not None:
+                        self._flush_node(t.node)
+                    return
             log.debug("→ %s", t.id)
             t0 = time.time()
             try:
@@ -566,12 +622,10 @@ class Flow:
                         m.update()
                 else:
                     r = await t.run(self.results)
-                t.result = r
-                t.state = DONE
-                self.results[t.id] = r
+                if key is not None:              # only successes are recorded
+                    self.memo.put(key, r, task=t.id, node=t.node)
+                self._finish(t, r, path)
                 log.debug("✓ %s (%.2fs)", t.id, time.time() - t0)
-                for cb in self._on_done.get(t.id, ()):   # dynamic fan-out hooks
-                    cb(r)
             except _Filtered as f:
                 t.state = FAILED
                 t.error = f
@@ -695,6 +749,18 @@ def _resolve(obj, results):
         return tuple(_resolve(x, results) for x in obj)
     if isinstance(obj, dict):
         return {k: _resolve(v, results) for k, v in obj.items()}
+    return obj
+
+
+def _placeholders(obj):
+    """`obj` with every `Handle` replaced by a stable placeholder — the static
+    half of a spawn task's memo key (handle *values* enter via dep results)."""
+    if isinstance(obj, Handle):
+        return f"<handle:{obj.node}>"
+    if isinstance(obj, (list, tuple)):
+        return [_placeholders(x) for x in obj]
+    if isinstance(obj, dict):
+        return {k: _placeholders(v) for k, v in obj.items()}
     return obj
 
 

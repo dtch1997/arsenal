@@ -39,13 +39,16 @@ def current() -> Flow:
 
 
 @contextmanager
-def flow(runs_dir=None, *, concurrency=8, title="flow"):
+def flow(runs_dir=None, *, concurrency=8, title="flow", config=None, memo=None):
     """Open a `Flow` and make it the current one for `do`/`fanout`/`retry`/`run`.
 
     Yields the underlying `Flow`, so you can drop down to `Flow.map`/`filter`/
-    `reduce`/`expand` for the parts the per-task DSL doesn't cover.
+    `reduce`/`expand` for the parts the per-task DSL doesn't cover. `config` is
+    snapshotted into the run's manifest.json; `memo` (a directory or `Memo`)
+    enables content-keyed step memoization.
     """
-    f = Flow(runs_dir, concurrency=concurrency, title=title)
+    f = Flow(runs_dir, concurrency=concurrency, title=title, config=config,
+             memo=memo)
     token = _current.set(f)
     try:
         yield f
@@ -53,11 +56,12 @@ def flow(runs_dir=None, *, concurrency=8, title="flow"):
         _current.reset(token)
 
 
-def do(fn, *args, after=(), name=None, **kwargs):
+def do(fn, *args, after=(), name=None, cache=True, **kwargs):
     """A single task running `fn(*args, **kwargs)`. Any handle in the arguments
     becomes a dependency (substituted with its result); `after` adds ordering-only
-    dependencies. Returns a one-task handle."""
-    return current().spawn(fn, args, kwargs, name=name, after=after)
+    dependencies; `cache=False` exempts it from memoization. Returns a one-task
+    handle."""
+    return current().spawn(fn, args, kwargs, name=name, after=after, cache=cache)
 
 
 def fanout(fn, unit, *, n, judge=None, score=None, after=(), name=None):
@@ -82,9 +86,9 @@ def each(fn, items, **kwargs):
     return [do(fn, x, **kwargs) for x in items]
 
 
-async def run(*, stop_when=None):
+async def run(*, stop_when=None, refresh=False):
     """Run the current `with flow(...)` graph; returns the final `RunState`."""
-    return await current().run(stop_when=stop_when)
+    return await current().run(stop_when=stop_when, refresh=refresh)
 
 
 def _name(fn, suffix):

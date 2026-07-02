@@ -25,6 +25,7 @@ fleet of coding agents, a data pipeline, or an eval harness. The core is pure st
 | `artifacts` | **content-addressed inputs/outputs with lineage**: `ArtifactStore` persists files/dirs/secrets by content hash and tracks `inputs` + `produced_by`, behind a backend seam (zero-dep `local_backend`, or the default lazy `cloudfs_backend()`) |
 | `serve`     | put `status.html` behind a public tunnel for a live link — a lazy re-export of the standalone [`marquee`](https://github.com/dtch1997/marquee) lib (cloudflared / localhost.run / ngrok) |
 | `manifest`  | **automatic provenance**: every `flow.run()` writes `runs_dir/manifest.json` (git sha/dirty/branch, argv, config, …) and every `store.put()` stamps `meta["git"]` — results always answer *"which code produced this?"* |
+| `memo`      | **content-keyed step memoization**: `Flow(memo=…)` persists every successful result keyed on fn source + input values — identical re-runs are free (crashed sweeps resume), changed steps re-run, `run(refresh=True)` deliberately resamples |
 
 ```bash
 make setup     # uv sync
@@ -296,6 +297,35 @@ Every `ArtifactStore.put()` also stamps `{"sha", "dirty"}` into the artifact's
 to each artifact's `inputs`/`produced_by`. Outside a git repo both degrade to
 `git: null` instead of failing. For ad-hoc scripts there's `write_manifest(path,
 config)` / `capture()` directly.
+
+## Memoization: re-running is free
+
+Give a flow a memo store and every successful task result is persisted under a
+key derived from **everything that could change the answer** — the step fn's
+source (recursing into closure cells, so `best_of`/`with_retry` include the fn
+they wrap), its declared inputs, and the *values* of its upstream results:
+
+```python
+flow = Flow("runs", memo="runs/memo")
+...
+await flow.run()               # first time: everything runs
+await flow.run()               # again: everything replays, zero work
+await flow.run(refresh=True)   # deliberately a NEW experiment: re-run + re-record
+```
+
+Change a step's code or an upstream value and that task (plus its downstream)
+re-runs; everything untouched replays. A crashed 200-task sweep resumes where it
+died. For nondeterministic (LLM-sampling) steps this is the honest semantics:
+the persisted samples *are* the experiment, a re-run replays them, and
+`refresh=True` is the explicit "draw fresh samples" act. Mark a node
+`cache=False` (`map`/`filter`/`reduce`/`add`/`do`) to always run it.
+
+Ground rules: only successes are recorded; results must round-trip through JSON
+(tuples come back as lists; non-serializable results just always run); unkeyable
+inputs degrade to a cache *miss*, never a wrong hit. Cached tasks show
+`cached: true` on the dashboard. The store is a plain directory of
+`<key>.json` files — share it on a shared filesystem, delete it to drop the
+cache.
 
 ## Examples
 

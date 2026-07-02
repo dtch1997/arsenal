@@ -33,6 +33,10 @@ experiment runs.
               (git sha/dirty/branch, argv, cwd, python, host, optional config) and
               `ArtifactStore.put()` stamps `meta["git"]` on every produced artifact,
               so results always answer "which code produced this?".
+  memo      — content-keyed step memoization: `Flow(memo=…)` persists every
+              successful result keyed on fn source + inputs, so re-running an
+              identical flow is free (crashed sweeps resume), changed steps re-run,
+              and `run(refresh=True)` is the explicit "new samples" act.
 """
 from ._log import log, enable_logging
 from .monitor import monitor, mark, read_monitors, read_graph, Monitor, SUFFIX
@@ -46,6 +50,7 @@ from .live import live_dashboard
 from .artifacts import (Artifact, ArtifactStore, local_backend, cloudfs_backend,
                         set_default_artifact_backend)
 from .manifest import capture, write_manifest, git_info, git_stamp
+from .memo import Memo, fn_fingerprint, memo_key
 from .serve import serve, parse_tunnel_url
 from . import checks
 
@@ -62,5 +67,6 @@ __all__ = [
     "Artifact", "ArtifactStore", "local_backend", "cloudfs_backend",
     "set_default_artifact_backend",
     "capture", "write_manifest", "git_info", "git_stamp",
+    "Memo", "fn_fingerprint", "memo_key",
     "serve", "parse_tunnel_url",
 ]
