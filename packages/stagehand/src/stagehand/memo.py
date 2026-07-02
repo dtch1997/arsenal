@@ -100,12 +100,9 @@ def fn_fingerprint(fn, _depth=0) -> str:
     return "\n".join(parts)
 
 
-def memo_key(fingerprint: str, static, dep_vals, extra=None) -> str:
+def memo_key(fingerprint: str, static, dep_vals) -> str:
     """Hash of everything that could change the answer: fn source + declared
-    static inputs + upstream result values (+ `extra` run-mode tags, e.g. the
-    smoke-mode marker). Non-JSON values hash via `repr`."""
-    payload = {"fn": fingerprint, "static": static, "deps": dep_vals}
-    if extra is not None:
-        payload["extra"] = extra
-    return hashlib.md5(json.dumps(payload, sort_keys=True,
-                                  default=repr).encode()).hexdigest()
+    static inputs + upstream result values. Non-JSON values hash via `repr`."""
+    payload = json.dumps({"fn": fingerprint, "static": static, "deps": dep_vals},
+                         sort_keys=True, default=repr)
+    return hashlib.md5(payload.encode()).hexdigest()

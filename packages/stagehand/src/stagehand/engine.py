@@ -189,7 +189,7 @@ class Flow:
     then `await flow.run()`."""
 
     def __init__(self, runs_dir=None, *, concurrency=8, title="flow", config=None,
-                 memo=None, smoke=None):
+                 memo=None):
         self.runs_dir = Path(runs_dir) if runs_dir is not None else None
         self.concurrency = concurrency
         self.title = title
@@ -197,12 +197,6 @@ class Flow:
         # memo: a `Memo` (or a directory for one) enabling content-keyed step
         # memoization — see stagehand.memo. None (default) = every task runs.
         self.memo = Memo(memo) if isinstance(memo, (str, Path)) else memo
-        # smoke: truncate every fan-out (static map/filter/reduce sources, expand
-        # outputs) to N items, so the WHOLE pipeline — analysis steps included —
-        # is exercised end-to-end before the real fleet launches. Construction-
-        # time because tasks are minted at declaration. Smoke results memoize
-        # under smoke-tagged keys, so they never masquerade as real results.
-        self.smoke = smoke
         self._refresh = False
         self._node_cache: dict[str, bool] = {}  # node -> participate in memo?
         self.tasks: dict[str, Task] = {}
@@ -221,11 +215,6 @@ class Flow:
         i = self._counter.get(node, 0)
         self._counter[node] = i + 1
         return f"{node}/{i}"
-
-    def _truncate(self, source):
-        """Apply smoke-mode truncation to a static (non-handle) source."""
-        items = list(source)
-        return items[:self.smoke] if self.smoke else items
 
     # ---- surface --------------------------------------------------------- #
     def map(self, node, source, fn, *, concurrency=None, cache=True):
@@ -250,7 +239,7 @@ class Flow:
             self._record(f"map {node!r} <- {source.node!r}", _param0(fn), source.elem_type)
             source.subscribe(on_id=mint_dep, on_close=out.close)
         else:
-            for item in self._truncate(source):
+            for item in source:
                 tid = self._tid(node)
                 async def run(results, item=item):
                     return await _call(fn, item)
@@ -286,7 +275,7 @@ class Flow:
             self._record(f"filter {node!r} <- {source.node!r}", _param0(pred), src_elem)
             source.subscribe(on_id=mint_dep, on_close=out.close)
         else:
-            for item in self._truncate(source):
+            for item in source:
                 tid = self._tid(node)
                 async def run(results, item=item):
                     return _apply_pred(pred, item)
@@ -323,7 +312,7 @@ class Flow:
             else:
                 source.subscribe(on_close=lambda: make(source.ids))
         else:
-            items = self._truncate(source)
+            items = list(source)
             tid = self._tid(node)
             async def run(results, items=items):
                 r = fn(items)
@@ -348,7 +337,7 @@ class Flow:
         def on_id(up_id):
             st["open"] += 1
             def cb(result):
-                for e in self._truncate(fn(result)):
+                for e in fn(result):
                     cid = self._tid(node)
                     # carry the upstream task id as a (pre-satisfied) dep so the
                     # dashboard can trace item lineage across the fan-out
@@ -513,8 +502,7 @@ class Flow:
             self._flush_graph()
             write_manifest(self.runs_dir / "manifest.json", self.config,
                            flow={"title": self.title, "tasks": len(self.tasks),
-                                 "concurrency": self.concurrency,
-                                 "smoke": self.smoke})
+                                 "concurrency": self.concurrency})
         self._gsem = asyncio.Semaphore(self.concurrency)
         self._node_sems = {n: asyncio.Semaphore(c)
                            for n, c in self._node_conc.items()}
@@ -588,10 +576,7 @@ class Flow:
             return None
         dep_vals = [self.results.get(d, "<absent>") for d in t.deps]
         try:
-            # smoke runs memoize under smoke-tagged keys: a truncated pipeline's
-            # results never replay into (or out of) a real run's cache.
-            return memo_key(fn_fingerprint(t.fn), t.static, dep_vals,
-                            extra={"smoke": self.smoke} if self.smoke else None)
+            return memo_key(fn_fingerprint(t.fn), t.static, dep_vals)
         except Exception:                       # unkeyable ⇒ just run it
             return None
 

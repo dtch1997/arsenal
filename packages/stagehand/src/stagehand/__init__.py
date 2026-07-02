@@ -37,10 +37,6 @@ experiment runs.
               successful result keyed on fn source + inputs, so re-running an
               identical flow is free (crashed sweeps resume), changed steps re-run,
               and `run(refresh=True)` is the explicit "new samples" act.
-  smoke     — `Flow(smoke=N)` truncates every fan-out (static map/filter/reduce
-              sources, expand outputs, the DSL's `each`) to N items while running
-              the WHOLE DAG, analysis included — the cheap end-to-end rehearsal
-              before the fleet; smoke results memoize under smoke-tagged keys.
 """
 from ._log import log, enable_logging
 from .monitor import monitor, mark, read_monitors, read_graph, Monitor, SUFFIX
