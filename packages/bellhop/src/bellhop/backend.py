@@ -37,8 +37,12 @@ class ExecBox(Protocol):
 
     id: str
 
+    # timeout: optional *client-side* cap in seconds; None (default) means no
+    # client-side limit — the box's native server-side TTL (PodConfig
+    # stop_after/terminate_after/max_lifetime, ModalConfig timeout/max_lifetime)
+    # is the backstop. A finite timeout raises ExecTimeoutError when it expires.
     async def exec(self, cmd: str, env: dict[str, str] | None = None,
-                   timeout: float = 3600) -> ExecResult: ...
+                   timeout: float | None = None) -> ExecResult: ...
 
     async def push(self, local: str | Path, remote: str) -> None: ...
 

@@ -153,8 +153,13 @@ class Sandbox:
         self.id = sb.object_id
 
     async def exec(self, cmd: str, env: dict[str, str] | None = None,
-                   timeout: float = 3600) -> ExecResult:
+                   timeout: float | None = None) -> ExecResult:
         """Run command(s) in the sandbox.
+
+        No client-side timeout by default — the sandbox's own TTL
+        (``timeout``/``max_lifetime`` on the config) is the backstop; pass a
+        finite ``timeout`` (seconds) to cap this one command via Modal's
+        native per-exec timeout.
 
         Env is passed natively (over Modal's API, not argv) so secret values
         never appear in the container's process list — the same guarantee the

@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import AsyncIterator, Literal
 
 from .backend import ExecResult
-from .errors import PodNotReadyError, PreflightError, ProvisionError
+from .errors import ExecTimeoutError, PodNotReadyError, PreflightError, ProvisionError
 from .graphql import RunpodGraphQL
 from .probes import ReadyProbe, SshProbe
 from .rest import RunpodRest
@@ -297,8 +297,15 @@ class Pod:
         return ExecResult(proc.returncode or 0, out, err)
 
     async def exec(self, cmd: str, env: dict[str, str] | None = None,
-                   timeout: float = 3600) -> ExecResult:
+                   timeout: float | None = None) -> ExecResult:
         """Run command(s) on the pod.
+
+        No client-side timeout by default: a long training job runs until the
+        pod's own TTL (``stop_after``/``terminate_after``/``max_lifetime``)
+        kills it, and a *dead* connection is caught by ssh's ServerAlive
+        keepalive rather than a wall-clock guess. Pass a finite ``timeout``
+        (seconds) to cap this one command — it raises :class:`ExecTimeoutError`
+        on expiry (the remote process may keep running on the pod).
 
         Env vars are exported *inside* the script (a fresh sshd session does not
         inherit the container's PID-1 env), and the whole script is fed over
@@ -311,7 +318,12 @@ class Pod:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
-        out, err = await _communicate(proc, stdin=script.encode(), timeout=timeout)
+        try:
+            out, err = await _communicate(proc, stdin=script.encode(), timeout=timeout)
+        except asyncio.TimeoutError:
+            head = cmd.strip().splitlines()[0][:120] if cmd.strip() else cmd
+            raise ExecTimeoutError(
+                f"exec timed out after {timeout:.0f}s on pod {self.id}: {head}") from None
         return ExecResult(proc.returncode or 0, out, err)
 
     async def push(self, local: str | Path, remote: str) -> None:

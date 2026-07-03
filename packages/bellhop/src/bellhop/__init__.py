@@ -3,6 +3,7 @@
 from .backend import ExecBox, ExecResult, open_box
 from .errors import (
     BellhopError,
+    ExecTimeoutError,
     GcsUploadError,
     PodNotReadyError,
     PreflightError,
@@ -30,5 +31,5 @@ __all__ = [
     "sandbox", "Sandbox", "ModalConfig",
     # errors
     "BellhopError", "RunpodError", "PreflightError", "ProvisionError", "PodNotReadyError",
-    "RemoteJobError", "ResultsMissingError", "GcsUploadError",
+    "RemoteJobError", "ExecTimeoutError", "ResultsMissingError", "GcsUploadError",
 ]

@@ -4,7 +4,8 @@ Mirrors the exit-code ladder of the original ``run.sh`` driver so callers can
 branch on failure mode instead of parsing exit codes:
 
     10 preflight, 20 provision, 30 never-ready,
-    40 remote-job-failed, 50 results-missing, 60 gcs-upload-failed.
+    40 remote-job-failed, 41 exec-timeout, 50 results-missing,
+    60 gcs-upload-failed.
 
 The hierarchy is provider-agnostic (RunPod *and* Modal): ``ProvisionError`` is
 raised when either a pod or a sandbox fails to come up, ``RemoteJobError`` when
@@ -51,6 +52,17 @@ class RemoteJobError(BellhopError):
         super().__init__(message)
         self.remote_exit = remote_exit
         self.log_tail = log_tail
+
+
+class ExecTimeoutError(BellhopError):
+    """An ``exec()``'s client-side ``timeout=`` expired.
+
+    Only raised when a caller opted into a finite timeout (the default is
+    unbounded — the box's server-side TTL is the backstop). NB the remote
+    process may still be running on the box; only the local wait was killed.
+    """
+
+    exit_code = 41
 
 
 class ResultsMissingError(BellhopError):

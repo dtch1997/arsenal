@@ -40,6 +40,9 @@ class RunSpec:
     local_out: str | None = None        # default ./experiments/<slug>
     gcs_base: str | None = DEFAULT_GCS_BASE   # set None to skip GCS upload
     env: dict[str, str] = field(default_factory=dict)
+    # optional client-side cap (seconds) on the job step; None (default) lets
+    # the job run until the box's server-side TTL (max_lifetime etc.) kills it
+    timeout: float | None = None
 
 
 @dataclass
@@ -98,7 +101,7 @@ async def run(spec: RunSpec, backend: "Backend", *, keep_pod: bool = False,
             f"{{\n{setup_block}echo '--- run ---'\n{spec.run}\n}} 2>&1 | tee {shlex.quote(spec.results_subdir + '/run.log')}\n"
             f"exit ${{PIPESTATUS[0]}}\n"
         )
-        job_res = await p.exec(job, env=spec.env)
+        job_res = await p.exec(job, env=spec.env, timeout=spec.timeout)
         remote_exit = job_res.exit_code
 
         # --- pull results ---

@@ -38,6 +38,8 @@ def _parser() -> argparse.ArgumentParser:
                         "RunPod also accepts a full gpuTypeId like 'NVIDIA GeForce RTX 4090'.")
     r.add_argument("--max-lifetime-hours", type=float, default=None,
                    help="hard max box lifetime (both backends; default: config default)")
+    r.add_argument("--run-timeout-hours", type=float, default=None,
+                   help="client-side cap on the job step (default: none — the box TTL is the bound)")
     # RunPod-specific
     r.add_argument("--compute", choices=["cpu", "gpu"], default=None, help="RunPod: derived from --gpu when omitted")
     r.add_argument("--gpu-id", default=None, help="[deprecated] verbatim RunPod gpuTypeId; use --gpu")
@@ -97,6 +99,7 @@ def main(argv: list[str] | None = None) -> int:
         local_out=args.local_out,
         gcs_base=None if args.no_gcs else args.gcs_base,
         env=dict(env),
+        timeout=args.run_timeout_hours * 3600 if args.run_timeout_hours else None,
     )
 
     try:

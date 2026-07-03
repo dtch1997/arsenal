@@ -250,3 +250,104 @@ def test_modal_unknown_preset_raises():
     pytest.importorskip("modal")
     with pytest.raises(PreflightError):
         ModalConfig(image_preset="does-not-exist").resolve_image()
+
+
+# --- exec timeout: unbounded by default, opt-in cap (issue #4) ----------------
+
+def test_exec_default_timeout_is_unbounded():
+    import inspect
+
+    from bellhop.backend import ExecBox
+    from bellhop.modal_box import Sandbox
+    from bellhop.pod import Pod
+
+    for cls in (ExecBox, Pod, Sandbox):
+        assert inspect.signature(cls.exec).parameters["timeout"].default is None
+
+
+def test_exec_finite_timeout_raises_exec_timeout_error(monkeypatch):
+    import asyncio
+
+    from bellhop import ExecTimeoutError
+    from bellhop.pod import Pod
+
+    class _HangProc:
+        returncode = None
+        killed = False
+
+        async def communicate(self, stdin=None):
+            await asyncio.sleep(30)
+
+        def kill(self):
+            self.killed = True
+
+        async def wait(self):
+            return 0
+
+    hang = _HangProc()
+
+    async def fake_exec(*argv, **kw):
+        return hang
+
+    p = Pod.__new__(Pod)          # skip provisioning; exec only needs _ssh_argv
+    p.id = "pod-x"
+    monkeypatch.setattr(Pod, "_ssh_argv", lambda self: ["ssh", "fake"])
+    monkeypatch.setattr("asyncio.create_subprocess_exec", fake_exec)
+
+    with pytest.raises(ExecTimeoutError, match="timed out after"):
+        asyncio.run(p.exec("sleep 999", timeout=0.05))
+    assert hang.killed            # the local ssh process was reaped
+
+
+def test_runspec_timeout_plumbs_to_job_exec_only(tmp_path, monkeypatch):
+    import asyncio
+    import contextlib
+    import importlib
+
+    from bellhop.backend import ExecResult
+    from bellhop.run import RunSpec
+
+    runmod = importlib.import_module("bellhop.run")
+
+    calls = []
+
+    class FakeBox:
+        id = "fake"
+
+        async def exec(self, cmd, env=None, timeout=None):
+            calls.append((cmd, timeout))
+            return ExecResult(0, "", "")
+
+        async def push(self, local, remote):
+            pass
+
+        async def pull(self, remote, dest):
+            pass
+
+        async def exists_remote(self, path):
+            return True
+
+        async def teardown(self):
+            pass
+
+    @contextlib.asynccontextmanager
+    async def fake_open_box(backend, *, keep=False, api_key=None):
+        yield FakeBox()
+
+    monkeypatch.setattr(runmod, "open_box", fake_open_box)
+    spec = RunSpec(slug="s", codebase=str(tmp_path), run="python x.py",
+                   local_out=str(tmp_path / "out"), gcs_base=None,
+                   timeout=7200)
+    res = asyncio.run(runmod.run(spec, PodConfig()))
+    assert res.remote_exit == 0
+
+    job_calls = [t for cmd, t in calls if "--- run ---" in cmd]
+    setup_calls = [t for cmd, t in calls if "--- run ---" not in cmd]
+    assert job_calls == [7200]                      # the job gets the cap
+    assert all(t is None for t in setup_calls)      # housekeeping stays unbounded
+
+
+def test_runspec_timeout_defaults_to_none():
+    from bellhop.run import RunSpec
+
+    assert RunSpec(slug="s", codebase=".", run="x").timeout is None

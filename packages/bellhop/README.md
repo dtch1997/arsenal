@@ -211,6 +211,23 @@ The backend-agnostic spelling of the hard kill is
 `--max-lifetime-hours` on the CLI) and it maps to `terminate_after` on RunPod
 and `timeout` on Modal, taking precedence over those fields.
 
+### No client-side exec timeout by default
+
+`exec()` — and therefore the job step of `run()` — has **no client-side
+timeout**: a long training run goes until it finishes or the box's server-side
+TTL kills the box. (Before 0.4.0 there was a silent 3600s default that killed
+hours-long jobs mid-flight.) A *dead* SSH connection is still detected promptly
+via ServerAlive keepalives, so "unbounded" doesn't mean "hangs forever on a
+dead pod".
+
+To cap a specific command or job, opt in explicitly:
+
+```python
+await p.exec("python train.py", timeout=2 * 3600)      # raises ExecTimeoutError
+RunSpec(slug="demo", codebase="./code", run="python go.py", timeout=2 * 3600)
+# CLI: --run-timeout-hours 2
+```
+
 ## Optional: persist results to GCS
 
 Off by default. Pass `gcs_base` (or `--gcs-base`) to upload the pulled results
@@ -228,6 +245,7 @@ RunSpec(slug="demo", codebase="./code", run="python go.py",
 `PreflightError` (bad config / missing key / `modal` not installed),
 `ProvisionError` (pod or sandbox create failed), `PodNotReadyError` (never became
 functional), `RemoteJobError` (carries `.remote_exit` + `.log_tail`),
+`ExecTimeoutError` (an opt-in `exec(timeout=...)` expired),
 `ResultsMissingError`, `GcsUploadError`. (`RunpodError` is a back-compat alias
 for `BellhopError`.)
 
