@@ -18,7 +18,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .backend import open_box
-from .errors import GcsUploadError, PreflightError, RemoteJobError, ResultsMissingError
+from .errors import (
+    ExecTimeoutError,
+    GcsUploadError,
+    PreflightError,
+    RemoteJobError,
+    ResultsMissingError,
+)
 
 if TYPE_CHECKING:
     from .modal_box import ModalConfig
@@ -60,6 +66,29 @@ def _is_git(codebase: str) -> bool:
     return codebase.startswith(("http://", "https://", "git@"))
 
 
+def _job_script(spec: RunSpec, run_dir: str) -> str:
+    """The setup+run script, tee'd to run.log.
+
+    ``set -e`` inside the block makes a failing ``setup`` abort the job instead
+    of silently running against a half-configured box (and applies to ``run``
+    too: the first failing command decides the exit status).
+    """
+    setup_block = f"echo '--- setup ---'\n{spec.setup}\n" if spec.setup else ""
+    return (
+        f"cd {shlex.quote(run_dir)}\n"
+        f"mkdir -p {shlex.quote(spec.results_subdir)}\n"
+        f"{{\nset -e\n{setup_block}echo '--- run ---'\n{spec.run}\n}} 2>&1 | tee {shlex.quote(spec.results_subdir + '/run.log')}\n"
+        f"exit ${{PIPESTATUS[0]}}\n"
+    )
+
+
+async def _checked_exec(box, cmd: str, what: str) -> None:
+    r = await box.exec(cmd)
+    if r.exit_code != 0:
+        raise RemoteJobError(f"{what} failed", remote_exit=r.exit_code,
+                             log_tail=r.stderr[-2000:])
+
+
 async def run(spec: RunSpec, backend: "Backend", *, keep_pod: bool = False,
               api_key: str | None = None) -> RunResult:
     """Run ``spec`` on the box implied by ``backend`` (PodConfig or ModalConfig).
@@ -84,31 +113,38 @@ async def run(spec: RunSpec, backend: "Backend", *, keep_pod: bool = False,
     async with open_box(backend, keep=keep_pod, api_key=api_key) as p:
         # --- upload codebase (mkdir -p the parent so both git-clone and push
         # work even when /workspace doesn't pre-exist, e.g. on a Modal image) ---
-        await p.exec(f"mkdir -p {shlex.quote(os.path.dirname(run_dir))}")
+        await _checked_exec(p, f"mkdir -p {shlex.quote(os.path.dirname(run_dir))}",
+                            "workspace setup (mkdir)")
         if _is_git(spec.codebase):
             r = await p.exec(f"git clone --depth 1 {shlex.quote(spec.codebase)} {shlex.quote(run_dir)}")
             if r.exit_code != 0:
                 raise RemoteJobError("git clone failed", remote_exit=r.exit_code, log_tail=r.stderr[-2000:])
         else:
-            await p.exec(f"mkdir -p {shlex.quote(run_dir)}")
+            await _checked_exec(p, f"mkdir -p {shlex.quote(run_dir)}",
+                                "workspace setup (mkdir)")
             await p.push(spec.codebase, run_dir)
 
         # --- run (setup then job), tee'd to a log that travels back ---
-        setup_block = f"echo '--- setup ---'\n{spec.setup}\n" if spec.setup else ""
-        job = (
-            f"cd {shlex.quote(run_dir)}\n"
-            f"mkdir -p {shlex.quote(spec.results_subdir)}\n"
-            f"{{\n{setup_block}echo '--- run ---'\n{spec.run}\n}} 2>&1 | tee {shlex.quote(spec.results_subdir + '/run.log')}\n"
-            f"exit ${{PIPESTATUS[0]}}\n"
-        )
-        job_res = await p.exec(job, env=spec.env, timeout=spec.timeout)
-        remote_exit = job_res.exit_code
+        timed_out: ExecTimeoutError | None = None
+        try:
+            job_res = await p.exec(_job_script(spec, run_dir), env=spec.env,
+                                   timeout=spec.timeout)
+            remote_exit = job_res.exit_code
+        except ExecTimeoutError as e:
+            # Still try to salvage whatever the job wrote before re-raising —
+            # partial results + run.log are exactly what you want after a
+            # timeout, and the box is torn down on exit either way.
+            timed_out = e
+            remote_exit = None
 
         # --- pull results ---
         if await p.exists_remote(results_remote):
             await p.pull(results_remote, local_out)
         elif remote_exit == 0:
             raise ResultsMissingError(f"job succeeded but no results dir at {results_remote}")
+
+        if timed_out is not None:
+            raise timed_out
 
         # --- upload to GCS (from this box; creds never touch the pod) ---
         gcs_uri = retrieve_cmd = None
@@ -117,7 +153,10 @@ async def run(spec: RunSpec, backend: "Backend", *, keep_pod: bool = False,
             await _gcs_upload(local_out, gcs_uri)
             retrieve_cmd = f"gcloud storage cp -r {gcs_uri} ./"
 
-        log_tail = _tail(os.path.join(local_out, spec.results_subdir, "run.log"))
+        # pull() extracts to local_out/<basename(results_remote)> — use the same
+        # derivation so a nested results_subdir ("out/results") still resolves.
+        pulled_dir = os.path.basename(results_remote.rstrip("/"))
+        log_tail = _tail(os.path.join(local_out, pulled_dir, "run.log"))
         result = RunResult(
             slug=spec.slug, pod_id=p.id, remote_exit=remote_exit,
             local_results=local_out, gcs_uri=gcs_uri, retrieve_cmd=retrieve_cmd, log_tail=log_tail,

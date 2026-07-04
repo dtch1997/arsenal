@@ -11,12 +11,13 @@ import contextlib
 import os
 import shlex
 import time
+import warnings
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import AsyncIterator, Literal
 
-from .backend import ExecResult
+from .backend import TAR_EXCLUDES, ExecResult
 from .errors import ExecTimeoutError, PodNotReadyError, PreflightError, ProvisionError
 from .graphql import RunpodGraphQL
 from .probes import ReadyProbe, SshProbe
@@ -72,9 +73,6 @@ SSH_OPTS = [
     "-o", "ServerAliveInterval=30",
 ]
 
-TAR_EXCLUDES = ["--exclude=.git", "--exclude=__pycache__", "--exclude=.venv",
-                "--exclude=node_modules", "--exclude=*.pyc"]
-
 
 @dataclass
 class PodConfig:
@@ -105,12 +103,16 @@ class PodConfig:
     stop_after: timedelta | None = timedelta(hours=24)
     terminate_after: timedelta | None = timedelta(hours=72)
     # unified spelling of the hard kill, same name as ModalConfig.max_lifetime;
-    # wins over terminate_after when set.
+    # wins over BOTH timers when set: terminate_after takes its value and
+    # stop_after is cleared (want a separate early-stop? set the two timers
+    # directly instead of max_lifetime).
     max_lifetime: timedelta | None = None
 
     def __post_init__(self):
         if self.max_lifetime is not None:
             self.terminate_after = self.max_lifetime
+            # the default 24h stop timer would halt a longer job early
+            self.stop_after = None
 
     @property
     def resolved_compute(self) -> str:
@@ -264,7 +266,11 @@ class Pod:
     async def _wait_ready(self) -> None:
         deadline = time.monotonic() + self.config.ready_timeout.total_seconds()
         while True:
-            if await self.config.ready(self):
+            try:
+                ok = await self.config.ready(self)
+            except Exception:
+                ok = False  # a raising probe = not ready yet (see probes.py)
+            if ok:
                 return
             if time.monotonic() >= deadline:
                 raise PodNotReadyError(
@@ -412,13 +418,26 @@ async def pod(config: PodConfig, *, keep: bool = False,
             # Native server-side TTL is GraphQL-only (and on-demand = GPU only).
             created = await _gql_create(config, api_key)
         else:
+            if config.has_ttl():
+                warnings.warn(
+                    "server-side TTL (stop_after/terminate_after/max_lifetime) is "
+                    "GPU-only on RunPod; this CPU pod gets NO native timer — if this "
+                    "process dies, nothing tears the pod down",
+                    stacklevel=2,
+                )
             body = config.to_create_body()
             try:
                 created = await rest.create_pod(body)
-            except ProvisionError:
+            except ProvisionError as first:
                 if config.cloud == "COMMUNITY" and config.cloud_fallback:
                     body["cloudType"] = "SECURE"
-                    created = await rest.create_pod(body)
+                    try:
+                        created = await rest.create_pod(body)
+                    except ProvisionError as second:
+                        raise ProvisionError(
+                            f"create failed on COMMUNITY ({first}) "
+                            f"and on the SECURE fallback ({second})"
+                        ) from second
                 else:
                     raise
         pod_id = created.get("id") or created.get("pod", {}).get("id")

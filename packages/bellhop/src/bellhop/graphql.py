@@ -29,11 +29,18 @@ mutation createPod($input: PodFindAndDeployOnDemandInput!) {
 
 
 class RunpodGraphQL:
-    """Minimal async GraphQL client (auth via ?api_key=, as runpodctl does)."""
+    """Minimal async GraphQL client.
+
+    Auth is an ``Authorization: Bearer`` header (verified against the live
+    API) — runpodctl's ``?api_key=`` query param would leak the key into URL
+    logs on any intermediary.
+    """
 
     def __init__(self, api_key: str | None = None, timeout: float = 60.0):
-        self._key = _api_key(api_key)
-        self._client = httpx.AsyncClient(timeout=timeout)
+        self._client = httpx.AsyncClient(
+            timeout=timeout,
+            headers={"Authorization": f"Bearer {_api_key(api_key)}"},
+        )
 
     async def __aenter__(self) -> "RunpodGraphQL":
         return self
@@ -46,8 +53,7 @@ class RunpodGraphQL:
 
     async def _post(self, query: str, variables: dict[str, Any]) -> dict[str, Any]:
         resp = await self._client.post(
-            GRAPHQL_URL, params={"api_key": self._key},
-            json={"query": query, "variables": variables},
+            GRAPHQL_URL, json={"query": query, "variables": variables},
         )
         if resp.status_code >= 300:
             raise ProvisionError(f"graphql HTTP {resp.status_code}: {resp.text[:400]}")

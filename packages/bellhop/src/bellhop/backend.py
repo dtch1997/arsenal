@@ -23,6 +23,10 @@ from typing import AsyncIterator, Protocol, runtime_checkable
 
 from .errors import PreflightError
 
+# What push() leaves out of the codebase archive, on either backend.
+TAR_EXCLUDES = ["--exclude=.git", "--exclude=__pycache__", "--exclude=.venv",
+                "--exclude=node_modules", "--exclude=*.pyc"]
+
 
 @dataclass
 class ExecResult:

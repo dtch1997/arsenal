@@ -107,6 +107,16 @@ def test_max_lifetime_maps_to_terminate_after():
     assert replace(cfg, name="x").terminate_after == timedelta(hours=8)
 
 
+def test_max_lifetime_clears_stop_after():
+    # The default 24h stop_after would halt a 48h job at the day mark even
+    # though the user asked for max_lifetime=48h — max_lifetime wins over both timers.
+    from dataclasses import replace
+    cfg = _cfg(gpu="A100", max_lifetime=timedelta(hours=48))
+    assert cfg.terminate_after == timedelta(hours=48)
+    assert cfg.stop_after is None
+    assert replace(cfg, name="x").stop_after is None
+
+
 def test_max_lifetime_maps_to_modal_timeout():
     kw = _create_kwargs(ModalConfig(max_lifetime=timedelta(hours=8)))
     assert kw["timeout"] == 8 * 3600
@@ -214,9 +224,12 @@ def test_modal_create_kwargs_defaults():
     assert "idle_timeout" not in kw       # None -> omitted
 
 
-def test_modal_ttl_none_falls_back_to_modal_default():
-    kw = _create_kwargs(ModalConfig(timeout=None))
-    assert kw["timeout"] == 300           # Modal's own create default
+def test_modal_ttl_none_omits_timeout_and_warns():
+    # timeout=None does NOT mean "no TTL" on Modal (Modal enforces its own
+    # 300s default) — the kwarg is omitted and the user is warned loudly.
+    with pytest.warns(UserWarning, match="300s"):
+        kw = _create_kwargs(ModalConfig(timeout=None))
+    assert "timeout" not in kw
 
 
 def test_modal_env_and_volumes_only_when_set():
@@ -351,3 +364,286 @@ def test_runspec_timeout_defaults_to_none():
     from bellhop.run import RunSpec
 
     assert RunSpec(slug="s", codebase=".", run="x").timeout is None
+
+
+# --- fixes from the 0.5.0 diagnosis pass --------------------------------------
+
+def test_wait_ready_treats_probe_raise_as_not_ready():
+    # probes.py promises "raising is also treated as not-ready"; a custom probe
+    # that raises must be retried, not crash the provision.
+    import asyncio
+
+    from bellhop.pod import Pod
+
+    class FlakyProbe:
+        calls = 0
+
+        async def __call__(self, pod):
+            type(self).calls += 1
+            if type(self).calls == 1:
+                raise RuntimeError("transient")
+            return True
+
+    p = Pod.__new__(Pod)
+    p.id = "pod-x"
+    p.config = PodConfig(ready=FlakyProbe(), ready_timeout=timedelta(seconds=5),
+                         poll_interval=0.01)
+    asyncio.run(p._wait_ready())
+    assert FlakyProbe.calls == 2
+
+
+class _FakeRest:
+    """Stands in for RunpodRest in pod() routing tests."""
+
+    fail_with = "no capacity on {cloud}"
+
+    def __init__(self, api_key=None):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return None
+
+    async def create_pod(self, body):
+        raise ProvisionError(self.fail_with.format(cloud=body["cloudType"]))
+
+
+def _tmp_ssh_key(tmp_path):
+    key = tmp_path / "id"
+    key.write_text("x")
+    (tmp_path / "id.pub").write_text("ssh-ed25519 AAAA test")
+    return str(key)
+
+
+def test_cloud_fallback_reports_both_errors(tmp_path, monkeypatch):
+    import asyncio
+    import importlib
+
+    podmod = importlib.import_module("bellhop.pod")
+    monkeypatch.setattr(podmod, "RunpodRest", _FakeRest)
+    cfg = PodConfig(ssh_key=_tmp_ssh_key(tmp_path), stop_after=None, terminate_after=None)
+
+    async def _go():
+        async with podmod.pod(cfg):
+            pass
+
+    with pytest.raises(ProvisionError, match="COMMUNITY.*SECURE fallback"):
+        asyncio.run(_go())
+
+
+def test_cpu_pod_with_ttl_warns(tmp_path, monkeypatch):
+    # CPU pods can't get a native TTL (GraphQL on-demand is GPU-only); the
+    # silent drop was a leaked-pod risk, so it must warn.
+    import asyncio
+    import importlib
+
+    podmod = importlib.import_module("bellhop.pod")
+    monkeypatch.setattr(podmod, "RunpodRest", _FakeRest)
+    cfg = PodConfig(ssh_key=_tmp_ssh_key(tmp_path), cloud_fallback=False)  # default TTL, CPU
+    assert cfg.has_ttl()
+
+    async def _go():
+        async with podmod.pod(cfg):
+            pass
+
+    with pytest.warns(UserWarning, match="GPU-only"):
+        with pytest.raises(ProvisionError):
+            asyncio.run(_go())
+
+
+# --- Modal exec honors the ExecBox timeout contract ---------------------------
+
+class _Aio:
+    def __init__(self, fn):
+        self.aio = fn
+
+
+class _FakeStream:
+    def __init__(self, data=""):
+        self._d = data
+        self.read = _Aio(self._read)
+
+    async def _read(self):
+        return self._d
+
+
+class _FakeProc:
+    def __init__(self, code, delay=0.0):
+        self.stdout = _FakeStream()
+        self.stderr = _FakeStream()
+        self._code = code
+        self._delay = delay
+        self.wait = _Aio(self._wait)
+
+    async def _wait(self):
+        import asyncio
+
+        if self._delay:
+            await asyncio.sleep(self._delay)
+        return self._code
+
+
+class _FakeSb:
+    object_id = "sb-x"
+
+    def __init__(self, proc):
+        self._proc = proc
+        self.exec = _Aio(self._exec)
+
+    async def _exec(self, *a, **kw):
+        return self._proc
+
+
+def test_modal_exec_timeout_raises_exec_timeout_error():
+    # Modal enforces its native timeout by killing the process (plain non-zero
+    # exit) — the backend must translate that into ExecTimeoutError per ExecBox.
+    import asyncio
+
+    from bellhop import ExecTimeoutError
+    from bellhop.modal_box import Sandbox
+
+    box = Sandbox(_FakeSb(_FakeProc(code=137, delay=0.1)), ModalConfig())
+    with pytest.raises(ExecTimeoutError, match="timed out after"):
+        asyncio.run(box.exec("sleep 999", timeout=0.05))
+
+
+def test_modal_exec_fast_failure_is_not_a_timeout():
+    import asyncio
+
+    from bellhop.modal_box import Sandbox
+
+    box = Sandbox(_FakeSb(_FakeProc(code=1)), ModalConfig())
+    res = asyncio.run(box.exec("false", timeout=60))
+    assert res.exit_code == 1             # legit failure passes through
+
+
+# --- run() job script + salvage behavior --------------------------------------
+
+def test_job_script_aborts_on_setup_failure(tmp_path):
+    # A failing setup must abort the job (set -e in the block), not silently
+    # run against a half-configured box. Execute the actual script with bash.
+    import subprocess
+
+    from bellhop.run import RunSpec, _job_script
+
+    spec = RunSpec(slug="s", codebase=".", setup="false",
+                   run="echo SHOULD_NOT_RUN")
+    script = "set -o pipefail\n" + _job_script(spec, str(tmp_path))
+    r = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+    assert r.returncode != 0
+    assert "SHOULD_NOT_RUN" not in r.stdout
+    log = (tmp_path / "results" / "run.log").read_text()
+    assert "SHOULD_NOT_RUN" not in log
+
+
+def test_job_script_exit_status_is_the_jobs(tmp_path):
+    import subprocess
+
+    from bellhop.run import RunSpec, _job_script
+
+    spec = RunSpec(slug="s", codebase=".", run="echo ok; exit 7")
+    script = "set -o pipefail\n" + _job_script(spec, str(tmp_path))
+    r = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+    assert r.returncode == 7              # tee doesn't mask the job's status
+    assert "ok" in (tmp_path / "results" / "run.log").read_text()
+
+
+class _SalvageBox:
+    """FakeBox whose job exec times out; records whether pull still ran."""
+
+    id = "fake"
+
+    def __init__(self):
+        self.pulled = []
+
+    async def exec(self, cmd, env=None, timeout=None):
+        from bellhop.backend import ExecResult
+        from bellhop.errors import ExecTimeoutError
+
+        if "--- run ---" in cmd:
+            raise ExecTimeoutError("exec timed out after 1s")
+        return ExecResult(0, "", "")
+
+    async def push(self, local, remote):
+        pass
+
+    async def pull(self, remote, dest):
+        self.pulled.append(remote)
+
+    async def exists_remote(self, path):
+        return True
+
+    async def teardown(self):
+        pass
+
+
+def test_run_salvages_results_on_timeout(tmp_path, monkeypatch):
+    import asyncio
+    import contextlib
+    import importlib
+
+    from bellhop import ExecTimeoutError
+    from bellhop.run import RunSpec
+
+    runmod = importlib.import_module("bellhop.run")
+    box = _SalvageBox()
+
+    @contextlib.asynccontextmanager
+    async def fake_open_box(backend, *, keep=False, api_key=None):
+        yield box
+
+    monkeypatch.setattr(runmod, "open_box", fake_open_box)
+    spec = RunSpec(slug="s", codebase=str(tmp_path), run="python x.py",
+                   local_out=str(tmp_path / "out"), gcs_base=None, timeout=1)
+    with pytest.raises(ExecTimeoutError):
+        asyncio.run(runmod.run(spec, PodConfig()))
+    assert box.pulled == ["/workspace/s/results"]   # partials came back first
+
+
+def test_nested_results_subdir_log_tail(tmp_path, monkeypatch):
+    # pull() extracts to local_out/<basename(remote)>; log_tail must look there
+    # even when results_subdir is nested.
+    import asyncio
+    import contextlib
+    import importlib
+    import os
+
+    from bellhop.backend import ExecResult
+    from bellhop.run import RunSpec
+
+    runmod = importlib.import_module("bellhop.run")
+
+    class Box:
+        id = "fake"
+
+        async def exec(self, cmd, env=None, timeout=None):
+            return ExecResult(0, "", "")
+
+        async def push(self, local, remote):
+            pass
+
+        async def pull(self, remote, dest):
+            # mimic real pull: dest/<basename(remote)>/
+            d = os.path.join(dest, os.path.basename(remote.rstrip("/")))
+            os.makedirs(d, exist_ok=True)
+            with open(os.path.join(d, "run.log"), "w") as f:
+                f.write("hello from the log\n")
+
+        async def exists_remote(self, path):
+            return True
+
+        async def teardown(self):
+            pass
+
+    @contextlib.asynccontextmanager
+    async def fake_open_box(backend, *, keep=False, api_key=None):
+        yield Box()
+
+    monkeypatch.setattr(runmod, "open_box", fake_open_box)
+    spec = RunSpec(slug="s", codebase=str(tmp_path), run="x",
+                   results_subdir="out/results",
+                   local_out=str(tmp_path / "loc"), gcs_base=None)
+    res = asyncio.run(runmod.run(spec, PodConfig()))
+    assert "hello from the log" in res.log_tail

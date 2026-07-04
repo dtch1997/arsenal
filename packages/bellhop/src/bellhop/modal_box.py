@@ -22,17 +22,16 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import math
+import time
+import warnings
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, AsyncIterator
 
-from .backend import ExecResult
-from .errors import PreflightError, ProvisionError
-
-# Same exclusions as the pod path; tar applies these when packing the codebase.
-TAR_EXCLUDES = ["--exclude=.git", "--exclude=__pycache__", "--exclude=.venv",
-                "--exclude=node_modules", "--exclude=*.pyc"]
+from .backend import TAR_EXCLUDES, ExecResult
+from .errors import ExecTimeoutError, PreflightError, ProvisionError
 
 
 def _import_modal():
@@ -134,7 +133,18 @@ def _create_kwargs(config: ModalConfig, *, image=None, app=None) -> dict:
         kw["secrets"] = list(config.secrets)
     if config.volumes:
         kw["volumes"] = dict(config.volumes)
-    kw["timeout"] = int(config.timeout.total_seconds()) if config.timeout else 300
+    if config.timeout:
+        kw["timeout"] = int(config.timeout.total_seconds())
+    else:
+        # There is no "unlimited" on Modal: with the kwarg omitted, Modal applies
+        # its own default (300s). That is NOT the PodConfig None-means-no-TTL
+        # semantic, so make the 5-minute box impossible to hit by surprise.
+        warnings.warn(
+            "ModalConfig timeout=None does not disable the sandbox lifetime — "
+            "Modal always enforces one (its default is 300s); set timeout= or "
+            "max_lifetime= explicitly for anything longer than a smoke test",
+            stacklevel=2,
+        )
     if config.idle_timeout:
         kw["idle_timeout"] = int(config.idle_timeout.total_seconds())
     return kw
@@ -159,22 +169,39 @@ class Sandbox:
         No client-side timeout by default — the sandbox's own TTL
         (``timeout``/``max_lifetime`` on the config) is the backstop; pass a
         finite ``timeout`` (seconds) to cap this one command via Modal's
-        native per-exec timeout.
+        native per-exec timeout. On expiry this raises
+        :class:`~bellhop.errors.ExecTimeoutError`, matching the pod backend
+        (the ExecBox contract).
 
         Env is passed natively (over Modal's API, not argv) so secret values
         never appear in the container's process list — the same guarantee the
         pod path gets by feeding the script over stdin.
         """
         script = f"set -o pipefail\n{cmd}\n"
-        proc = await self._sb.exec.aio(
-            "bash", "-c", script,
-            env=dict(env or {}),
-            timeout=int(timeout) if timeout else None,
-        )
-        out = await proc.stdout.read.aio()
-        err = await proc.stderr.read.aio()
-        code = await proc.wait.aio()
+        start = time.monotonic()
+        try:
+            proc = await self._sb.exec.aio(
+                "bash", "-c", script,
+                env=dict(env or {}),
+                timeout=math.ceil(timeout) if timeout is not None else None,
+            )
+            out = await proc.stdout.read.aio()
+            err = await proc.stderr.read.aio()
+            code = await proc.wait.aio()
+        except Exception as e:
+            if timeout is not None and "timeout" in type(e).__name__.lower():
+                raise self._timeout_err(cmd, timeout) from e
+            raise
+        # Modal enforces the native timeout by killing the process and
+        # reporting a plain non-zero exit; translate that into the typed error.
+        if timeout is not None and code != 0 and time.monotonic() - start >= timeout:
+            raise self._timeout_err(cmd, timeout)
         return ExecResult(code or 0, out, err)
+
+    def _timeout_err(self, cmd: str, timeout: float) -> ExecTimeoutError:
+        head = cmd.strip().splitlines()[0][:120] if cmd.strip() else cmd
+        return ExecTimeoutError(
+            f"exec timed out after {timeout:.0f}s in sandbox {self.id}: {head}")
 
     async def push(self, local: str | Path, remote: str) -> None:
         """Upload a local directory to ``remote`` (tar-over-exec).

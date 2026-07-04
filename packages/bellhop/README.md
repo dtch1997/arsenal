@@ -199,17 +199,24 @@ field), so setting a timer routes pod creation through GraphQL automatically.
 > minute-precise — a short timer may fire well after its deadline. Treat them as
 > an hours-scale backstop, not a precise kill switch. The `async with` cleanup
 > is what you should rely on for prompt teardown. Native TTL currently applies
-> to GPU pods only (the on-demand path); CPU pods rely on `finally` alone.
+> to GPU pods only (the on-demand path); CPU pods rely on `finally` alone —
+> bellhop warns at creation time when a CPU pod's requested TTL is dropped.
 
 On the **Modal** backend the equivalents are first-class `create` kwargs:
 `ModalConfig(timeout=timedelta(hours=24))` is the hard max lifetime and
 `idle_timeout=timedelta(minutes=30)` terminates the sandbox after inactivity —
-no GraphQL detour, and they apply to CPU and GPU sandboxes alike.
+no GraphQL detour, and they apply to CPU and GPU sandboxes alike. Note that
+`timeout=None` does **not** mean "no TTL" on Modal — Modal always enforces a
+sandbox lifetime and its own default is 300s, so bellhop warns if you leave the
+timeout unset.
 
 The backend-agnostic spelling of the hard kill is
 **`max_lifetime=timedelta(...)`** — set it on either config (or
 `--max-lifetime-hours` on the CLI) and it maps to `terminate_after` on RunPod
-and `timeout` on Modal, taking precedence over those fields.
+and `timeout` on Modal, taking precedence over those fields. On RunPod it also
+clears `stop_after`: the default 24h stop timer would otherwise halt a longer
+job at the day mark. (Want an early stop *and* a later terminate? Set
+`stop_after`/`terminate_after` directly instead of `max_lifetime`.)
 
 ### No client-side exec timeout by default
 
@@ -227,6 +234,11 @@ await p.exec("python train.py", timeout=2 * 3600)      # raises ExecTimeoutError
 RunSpec(slug="demo", codebase="./code", run="python go.py", timeout=2 * 3600)
 # CLI: --run-timeout-hours 2
 ```
+
+Both backends raise `ExecTimeoutError` on expiry (Modal maps it onto its native
+per-exec timeout). When the *job step* of `run()` times out, bellhop still
+pulls whatever landed in the results dir — partial results and `run.log` —
+before re-raising, so a timed-out run stays debuggable.
 
 ## Optional: persist results to GCS
 
@@ -251,6 +263,9 @@ for `BellhopError`.)
 
 ## Notes
 
+- `run()` executes `setup` and `run` under `set -e`: a failing `setup` aborts
+  the job instead of silently running against a half-configured box, and the
+  first failing command in `run` decides the exit status.
 - Code/result transfer is **tar-over-ssh** on RunPod and **tar-over-exec** on
   Modal — only needs `tar` in the image (no rsync; on RunPod also `ssh`).
 - Env vars passed to `exec(env=...)` never appear in the box's process list:
