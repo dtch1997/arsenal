@@ -12,11 +12,10 @@ experiment runs.
               `await flow.run(stop_when=...)`. The scheduler streams results between
               nodes (no barriers except `reduce`), fans out dynamically, and exits
               early on a criterion.
-  dsl       — an imperative-reading surface over the engine: `with flow(...)` +
-              `do` / `fanout` / `retry` / `run` (lazy handles that compile to the DAG).
-  agents    — coding-agent instances as steps: `agent(prompt, …)` -> AgentOutcome,
-              behind a backend seam (zero-dep `subprocess_backend`, or the
-              recommended lazy `flightdeck_backend()`); composes with fanout/retry.
+  agents    — coding-agent instances as steps: `agent(flow, prompt, …)` ->
+              AgentOutcome, behind a backend seam (zero-dep `subprocess_backend`,
+              or the recommended lazy `flightdeck_backend()`); composes with
+              best_of/with_retry.
   checks    — reusable correctness predicates (`produced`/`finite`/`exit_ok`/
               `tests_pass`/`valid_image`/…) returning a composable `(ok, issues)`
               gate result; the per-step-type recipes in `cookbook/` build on them.
@@ -43,7 +42,6 @@ from .monitor import monitor, mark, read_monitors, read_graph, Monitor, SUFFIX
 from .dashboard import render_dashboard, default_note, COLORS
 from .engine import (Flow, Handle, Task, RunState, FlowCheckError,
                      best_of, with_retry, current_monitor)
-from .dsl import flow, do, fanout, retry, each, run, current
 from .agents import (agent, AgentOutcome, AgentSpec, subprocess_backend,
                      flightdeck_backend, set_default_backend, DEFAULT_TOOLS)
 from .live import live_dashboard
@@ -60,7 +58,6 @@ __all__ = [
     "render_dashboard", "default_note", "COLORS",
     "Flow", "Handle", "Task", "RunState", "FlowCheckError", "best_of", "with_retry",
     "current_monitor",
-    "flow", "do", "fanout", "retry", "each", "run", "current",
     "agent", "AgentOutcome", "AgentSpec", "subprocess_backend",
     "flightdeck_backend", "set_default_backend", "DEFAULT_TOOLS",
     "live_dashboard",

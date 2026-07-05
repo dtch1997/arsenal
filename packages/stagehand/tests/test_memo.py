@@ -1,11 +1,10 @@
 """Unit tests for content-keyed step memoization — replay on identical re-run,
 invalidation on changed fn / inputs, refresh semantics, failure never cached,
-cache=False opt-out, downstream flow of cached values, and the DSL surface."""
+cache=False opt-out, downstream flow of cached values, and the spawn surface."""
 import asyncio
 import json
 
 from stagehand import Flow, Memo, fn_fingerprint, memo_key
-from stagehand import flow, do, run
 
 
 def _run(f, **kw):
@@ -184,19 +183,19 @@ def test_cached_hit_feeds_expand_fanout(tmp_path):
     assert sorted(out2.results()) == [1, 2, 3]
 
 
-# ---- DSL surface ------------------------------------------------------------- #
-def test_dsl_memo_and_cache_flag(tmp_path):
+# ---- spawn surface ----------------------------------------------------------- #
+def test_spawn_memo_replays(tmp_path):
     calls = []
     def step(x):
         calls.append(x)
         return x * 2
     async def main():
-        with flow(memo=tmp_path / "memo"):
-            do(step, 21)
-            await run()
+        f = Flow(memo=tmp_path / "memo")
+        f.spawn(step, (21,))
+        await f.run()
     asyncio.run(main())
     asyncio.run(main())
-    assert calls == [21]                       # replayed via the DSL too
+    assert calls == [21]                       # replayed via spawn too
 
 
 def test_memo_entry_records_provenance(tmp_path):

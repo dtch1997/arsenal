@@ -2,10 +2,10 @@
 (no real `claude -p`). In real use, drop the fake and pass `flightdeck_backend()`
 (or rely on the default `subprocess_backend`).
 
-    agent(...)            -- one coding agent as a step -> AgentOutcome
-    fanout(agent_fn, ...) -- best-of-N agents on one task, keep the best patch
-    retry(agent_fn, ...)  -- retry an agent with feedback until it passes
-    reduce(...)           -- merge the fleet's outcomes
+    agent(flow, ...)          -- one coding agent as a step -> AgentOutcome
+    best_of(agent_fn, ...)    -- best-of-N agents on one task, keep the best patch
+    with_retry(agent_fn, ...) -- retry an agent with feedback until it passes
+    spawn over handles        -- merge the fleet's outcomes
 
     uv run python examples/agent_fleet.py
 """
@@ -14,7 +14,7 @@ import asyncio
 import random
 from pathlib import Path
 
-from stagehand import (flow, do, fanout, retry, run, agent, AgentOutcome,
+from stagehand import (Flow, best_of, with_retry, agent, AgentOutcome,
                        AgentSpec, live_dashboard)
 
 
@@ -26,7 +26,7 @@ async def fake_backend(spec: AgentSpec) -> AgentOutcome:
                         name=spec.name)
 
 
-# --- an agent-fn for fanout/retry: `attempt` varies the try --- #
+# --- an agent-fn for best_of/with_retry: `attempt` varies the try --- #
 async def attempt_fix(task, *, attempt=0, feedback=None):
     note = f" | prev: {feedback}" if feedback else ""
     return await fake_backend(AgentSpec(prompt=f"{task} (try {attempt}){note}",
@@ -36,22 +36,27 @@ async def attempt_fix(task, *, attempt=0, feedback=None):
 async def main():
     runs_dir = Path("runs-agents")
 
-    with flow(runs_dir, title="agent fleet", concurrency=4):
-        # one agent as a step
-        summary = agent("summarize the repo", backend=fake_backend, name="summarize")
+    f = Flow(runs_dir, title="agent fleet", concurrency=4)
 
-        # best-of-4 agents on one task, keep the highest-quality patch
-        best = fanout(attempt_fix, "fix bug #42", n=4, score=lambda o: o.cost)
+    # one agent as a step
+    summary = agent(f, "summarize the repo", backend=fake_backend, name="summarize")
 
-        # retry an agent with feedback until its output is acceptable
-        fixed = retry(attempt_fix, "make the flaky test pass",
-                      check=lambda o: (o.ok, ["still failing"]), max_attempts=4)
+    # best-of-4 agents on one task, keep the highest-quality patch
+    best = f.spawn(best_of(attempt_fix, 4, score=lambda o: o.cost),
+                   ("fix bug #42",), name="fix", type_fn=attempt_fix)
 
-        # merge the fleet's outcomes
-        do(lambda s, b, f: None, summary, best, fixed, name="merge")
+    # retry an agent with feedback until its output is acceptable
+    fixed = f.spawn(with_retry(attempt_fix,
+                               check=lambda o: (o.ok, ["still failing"]),
+                               max_attempts=4),
+                    ("make the flaky test pass",), name="stabilize",
+                    type_fn=attempt_fix)
 
-        async with live_dashboard(runs_dir, title="agent fleet") as status_html:
-            state = await run()
+    # merge the fleet's outcomes
+    f.spawn(lambda s, b, x: None, (summary, best, fixed), name="merge")
+
+    async with live_dashboard(runs_dir, title="agent fleet") as status_html:
+        state = await f.run()
 
     print(f"summarize: {summary.result.summary}")
     print(f"best-of-4:  {best.result.summary}")

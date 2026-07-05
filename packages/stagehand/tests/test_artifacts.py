@@ -5,7 +5,7 @@ import asyncio
 import json
 
 from stagehand import ArtifactStore, Artifact, local_backend
-from stagehand import flow, do, run
+from stagehand import Flow
 
 
 def _store(tmp_path, **kw):
@@ -125,9 +125,9 @@ def test_produced_by_stamped_from_running_task(tmp_path):
         return store.put(src, name="model")
 
     async def body():
-        with flow(tmp_path / "runs", title="t"):
-            h = do(train, 0, name="train")
-            await run()
+        f = Flow(tmp_path / "runs", title="t")
+        h = f.spawn(train, (0,), name="train")
+        await f.run()
         return h.result
 
     art = asyncio.run(body())

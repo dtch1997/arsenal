@@ -2,7 +2,7 @@
 import asyncio
 from typing import Optional
 
-from stagehand import Flow, FlowCheckError, flow, do, fanout, retry
+from stagehand import Flow, FlowCheckError, best_of
 
 
 # --- a little typed domain ------------------------------------------------- #
@@ -130,7 +130,7 @@ def test_optional_input_accepts_concrete():
     f.check()
 
 
-# --- DSL surface is checked too -------------------------------------------- #
+# --- spawn surface is checked too ------------------------------------------ #
 def make_cfg() -> Cfg:
     return Cfg()
 
@@ -141,34 +141,36 @@ async def sample(m: Model, *, attempt=0) -> Eval:
     return Eval()
 
 
-def test_dsl_do_type_mismatch_is_caught():
+def test_spawn_type_mismatch_is_caught():
     raised = False
-    with flow() as f:
-        c = do(make_cfg, name="cfg")             # -> Cfg
-        do(ev, c, name="eval")                    # wants Model, gets Cfg
-        try:
-            f.check()
-        except FlowCheckError:
-            raised = True
-    assert raised
-
-
-def test_dsl_fanout_checks_via_type_fn():
-    raised = False
-    with flow() as f:
-        c = do(make_cfg, name="cfg")             # -> Cfg
-        fanout(sample, c, n=2, score=lambda r: 0)  # sample wants Model, gets Cfg
-        try:
-            f.check()
-        except FlowCheckError:
-            raised = True
-    assert raised
-
-
-def test_dsl_well_typed_passes():
-    with flow() as f:
-        async def mk() -> Model:
-            return Model()
-        m = do(mk, name="mk")
-        do(ev, m, name="eval")                    # Model -> Model, fine
+    f = Flow()
+    c = f.spawn(make_cfg, name="cfg")            # -> Cfg
+    f.spawn(ev, (c,), name="eval")               # wants Model, gets Cfg
+    try:
         f.check()
+    except FlowCheckError:
+        raised = True
+    assert raised
+
+
+def test_spawn_policy_checks_via_type_fn():
+    raised = False
+    f = Flow()
+    c = f.spawn(make_cfg, name="cfg")            # -> Cfg
+    f.spawn(best_of(sample, 2, score=lambda r: 0), (c,),
+            name="sample", type_fn=sample)       # sample wants Model, gets Cfg
+    try:
+        f.check()
+    except FlowCheckError:
+        raised = True
+    assert raised
+
+
+def test_spawn_well_typed_passes():
+    f = Flow()
+
+    async def mk() -> Model:
+        return Model()
+    m = f.spawn(mk, name="mk")
+    f.spawn(ev, (m,), name="eval")               # Model -> Model, fine
+    f.check()

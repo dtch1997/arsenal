@@ -18,7 +18,7 @@ import asyncio
 import json
 from pathlib import Path
 
-from stagehand import ArtifactStore, local_backend, flow, do, run
+from stagehand import ArtifactStore, local_backend, Flow
 
 
 def _fresh(p: Path) -> Path:
@@ -63,10 +63,11 @@ async def main():
     key = store.secret("HF_TOKEN")          # ref-only: the value is never uploaded
 
     # --- run the flow; artifacts flow through the handles ----------------- #
-    with flow(runs / "flow", title="artifacts demo"):
-        lora = do(train, data, store=store, cfg=cfg, key=key, work=work, name="train")
-        evl = do(evaluate, lora, store=store, work=work, name="eval")
-        await run()
+    f = Flow(runs / "flow", title="artifacts demo")
+    lora = f.spawn(train, (data,), {"store": store, "cfg": cfg, "key": key,
+                                    "work": work}, name="train")
+    evl = f.spawn(evaluate, (lora,), {"store": store, "work": work}, name="eval")
+    await f.run()
 
     adapter, eval_results = lora.result, evl.result
     print(f"adapter   : {adapter.name}  kind={adapter.kind}  id={adapter.id[:12]}…")

@@ -1,9 +1,9 @@
 """agents — coding-agent instances as first-class steps.
 
-An agent is just a step: `agent(prompt, …)` spawns a headless coding agent and
-returns a structured `AgentOutcome`, so it composes with the rest of the engine —
-`fanout` for best-of-N agents (judge picks the best patch), `retry` for
-retry-with-feedback (feed the test failures back), `reduce` to merge.
+An agent is just a step: `agent(flow, prompt, …)` spawns a headless coding agent
+and returns a structured `AgentOutcome`, so it composes with the rest of the
+engine — `best_of` for best-of-N agents (judge picks the best patch), `with_retry`
+for retry-with-feedback (feed the test failures back), `reduce` to merge.
 
 The work is done by a **backend** (an async `spec -> AgentOutcome`), behind a
 seam so the core stays dependency-free:
@@ -18,10 +18,10 @@ Parallel agents that edit files must not clobber each other — pass
 `isolation="worktree"` to run each in its own throwaway git worktree and capture
 its diff.
 
-    with flow("runs"):
-        patch = agent("fix the failing test in foo.py", isolation="worktree")
-        best  = fanout(agent_fn, task, n=4, judge=pick_best_patch)   # best-of-N agents
-        await run()
+    flow  = Flow("runs")
+    patch = agent(flow, "fix the failing test in foo.py", isolation="worktree")
+    best  = flow.map("solve", tasks, best_of(agent_fn, n=4, judge=pick_best_patch))
+    await flow.run()
 """
 from __future__ import annotations
 import asyncio
@@ -31,7 +31,6 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from .engine import current_monitor
-from .dsl import current
 
 DEFAULT_TOOLS = ("Bash", "Read", "Write", "Edit", "Glob", "Grep", "TodoWrite")
 
@@ -165,17 +164,19 @@ async def _with_worktree(base_cwd, run_in):
 
 
 # ---- the step ------------------------------------------------------------- #
-def agent(prompt, *inputs, name=None, tools=DEFAULT_TOOLS, isolation=None,
+def agent(flow, prompt, *inputs, name=None, tools=DEFAULT_TOOLS, isolation=None,
           backend=None, permission_mode="acceptEdits", model=None, timeout=None,
           cwd=".", after=()):
-    """A coding-agent step. `prompt` is a string, or a callable built from upstream
-    results: `agent(lambda issue: f"fix {issue}", issue_handle)`. `inputs` (handles
-    OK) feed that callable. Returns a one-task `Handle[AgentOutcome]`.
+    """A coding-agent step on `flow`. `prompt` is a string, or a callable built
+    from upstream results: `agent(flow, lambda issue: f"fix {issue}",
+    issue_handle)`. `inputs` (handles OK) feed that callable. Returns a one-task
+    `Handle[AgentOutcome]`.
 
     `isolation="worktree"` runs the agent in its own git worktree and captures the
     diff (use it whenever agents run in parallel and edit files). `backend`
     defaults to `subprocess_backend`; pass `flightdeck_backend()` for live
-    monitoring. Composes with `fanout` (best-of-N) and `retry` (retry-on-failure).
+    monitoring. For best-of-N / retry-with-feedback agents, wrap a step fn in
+    `best_of` / `with_retry` and declare it with `flow.map` / `flow.spawn`.
     """
     be = backend or _default_backend
     nm = name or "agent"
@@ -188,6 +189,6 @@ def agent(prompt, *inputs, name=None, tools=DEFAULT_TOOLS, isolation=None,
             return await _with_worktree(cwd, lambda wt: be(replace(spec, cwd=wt)))
         return await be(spec)
 
-    out = current().spawn(_run, inputs, name=nm, after=after)
+    out = flow.spawn(_run, inputs, name=nm, after=after)
     out.elem_type = AgentOutcome     # typed for downstream check()/judge
     return out

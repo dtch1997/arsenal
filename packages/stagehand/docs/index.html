@@ -194,29 +194,11 @@ fixed = flow.map(<span class="s">"fix"</span>, units, with_retry(solve, check=pa
 <span class="c"># train emits K checkpoints (K unknown until runtime) -> eval each</span>
 ckpts = flow.expand(<span class="s">"ckpts"</span>, trained, <span class="k">lambda</span> r: r[<span class="s">"checkpoints"</span>])
 evals = flow.map(<span class="s">"eval"</span>, ckpts, eval_one)</pre>
-  </section>
-
-  <section>
-    <h2>Or write it as straight-line code</h2>
-    <p>
-      The <span class="mono">dsl</span> is the per-task surface — <span class="mono">do(fn, …)</span> is one task
-      and reads imperatively. It's lazy: <span class="mono">do</span> returns a placeholder <b>handle</b>,
-      nothing runs until <span class="mono">run()</span>, and dependencies are inferred from the handles you
-      pass. <span class="mono">fanout</span> and <span class="mono">retry</span> have the same shape;
-      <span class="mono">after=[…]</span> is an ordering-only dep — your <span class="mono">wait(A); do(B)</span>.
-    </p>
-<pre><span class="k">with</span> flow(<span class="s">"runs"</span>, concurrency=<span class="s">8</span>):
-    ckpt  = do(train, cell)                    <span class="c"># a task, no deps</span>
-    good  = do(check, ckpt)                    <span class="c"># handle arg ⇒ dependency</span>
-    best  = fanout(solve, good, n=<span class="s">4</span>, score=s)  <span class="c"># same shape as do</span>
-    fixed = retry(format, best, check=parses)  <span class="c"># same shape as do</span>
-    do(report, after=[fixed])                  <span class="c"># wait(A); do(B) — ordering only</span>
-    <span class="k">await</span> run(stop_when=<span class="k">lambda</span> s: s.done &gt;= <span class="s">100</span>)
-<span class="nb">print</span>(ckpt.result)                             <span class="c"># filled in after the run</span></pre>
     <p class="muted">
       A handle is a placeholder, so you can't <span class="mono">if</span> on its value while building —
       put result-dependent control flow <i>inside</i> a node fn (a normal coroutine: plain
-      <span class="mono">await</span> / <span class="mono">if</span>; raise to prune).
+      <span class="mono">await</span> / <span class="mono">if</span>; raise to prune), or use
+      <span class="mono">filter</span> / <span class="mono">expand</span>.
     </p>
   </section>
 
@@ -245,15 +227,15 @@ flow.check()                 <span class="c"># raises on a malformed / ill-typed
   <section>
     <h2>Coding agents as steps</h2>
     <p>
-      An agent is just a step. <span class="mono">agent(prompt, …)</span> spawns a headless coding agent
+      An agent is just a step. <span class="mono">agent(flow, prompt, …)</span> spawns a headless coding agent
       and returns a structured <span class="mono">AgentOutcome</span>, so it composes with everything —
-      <span class="mono">fanout</span> for best-of-N agents (judge picks the best patch),
-      <span class="mono">retry</span> for retry-with-feedback, <span class="mono">reduce</span> to merge.
+      <span class="mono">best_of</span> for best-of-N agents (judge picks the best patch),
+      <span class="mono">with_retry</span> for retry-with-feedback, <span class="mono">reduce</span> to merge.
     </p>
-<pre><span class="k">with</span> flow(<span class="s">"runs"</span>, concurrency=<span class="s">4</span>):
-    patch = agent(<span class="s">"fix the failing test in foo.py"</span>, isolation=<span class="s">"worktree"</span>)
-    best  = fanout(solve_agent, <span class="s">"implement #42"</span>, n=<span class="s">4</span>, judge=pick_best)  <span class="c"># best-of-N agents</span>
-    <span class="k">await</span> run()
+<pre>flow  = Flow(<span class="s">"runs"</span>, concurrency=<span class="s">4</span>)
+patch = agent(flow, <span class="s">"fix the failing test in foo.py"</span>, isolation=<span class="s">"worktree"</span>)
+best  = flow.map(<span class="s">"solve"</span>, issues, best_of(solve_agent, n=<span class="s">4</span>, judge=pick_best))  <span class="c"># best-of-N agents</span>
+<span class="k">await</span> flow.run()
 <span class="nb">print</span>(patch.result.diff)</pre>
     <p class="muted">
       <span class="mono">isolation="worktree"</span> runs each agent in its own throwaway git worktree and
@@ -300,15 +282,11 @@ flow.check()                 <span class="c"># raises on a malformed / ill-typed
       </div>
       <div class="layer">
         <h3><code>engine</code></h3>
-        <p>The DAG engine. Declare with <span class="mono">map</span> / <span class="mono">filter</span> / <span class="mono">reduce</span> / <span class="mono">expand</span> / <span class="mono">add</span>, add <span class="mono">best_of</span> / <span class="mono">with_retry</span> node policies, then <span class="mono">await flow.run(stop_when=…)</span>. Streams between nodes, fans out dynamically, exits early on a criterion.</p>
-      </div>
-      <div class="layer">
-        <h3><code>dsl</code></h3>
-        <p>Imperative-reading surface: <span class="mono">with flow(…)</span> + <span class="mono">do</span> / <span class="mono">fanout</span> / <span class="mono">retry</span> / <span class="mono">run</span>. Straight-line code that builds the same DAG — lazy handles, deps inferred from the handles you pass.</p>
+        <p>The DAG engine. Declare with <span class="mono">map</span> / <span class="mono">filter</span> / <span class="mono">reduce</span> / <span class="mono">expand</span> / <span class="mono">spawn</span> / <span class="mono">add</span>, add <span class="mono">best_of</span> / <span class="mono">with_retry</span> node policies, then <span class="mono">await flow.run(stop_when=…)</span>. Streams between nodes, fans out dynamically, exits early on a criterion.</p>
       </div>
       <div class="layer">
         <h3><code>agents</code></h3>
-        <p>Coding agents as steps: <span class="mono">agent(prompt, …)</span> → <span class="mono">AgentOutcome</span>, with worktree isolation. Backend seam — zero-dep <span class="mono">subprocess_backend</span> or the recommended lazy <span class="mono">flightdeck_backend()</span>. Composes with fanout / retry.</p>
+        <p>Coding agents as steps: <span class="mono">agent(flow, prompt, …)</span> → <span class="mono">AgentOutcome</span>, with worktree isolation. Backend seam — zero-dep <span class="mono">subprocess_backend</span> or the recommended lazy <span class="mono">flightdeck_backend()</span>. Composes with best_of / with_retry.</p>
       </div>
       <div class="layer">
         <h3><code>pipeline</code></h3>

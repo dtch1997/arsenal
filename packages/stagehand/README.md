@@ -18,9 +18,8 @@ fleet of coding agents, a data pipeline, or an eval harness. The core is pure st
 |-------|-------------------|
 | `monitor`   | a file-backed `running/done/failed` + `done/total` ticker per unit of work; units link via `parent` into a tree |
 | `dashboard` | render that tree into one auto-refreshing HTML status page |
-| `engine`    | the **DAG engine**: declare with `Flow.map`/`filter`/`reduce`/`expand`/`add` (+ `best_of`/`with_retry` policies), `await flow.run(stop_when=…)`; streams between steps, fans out, exits early |
-| `dsl`       | an **imperative-reading surface**: `with flow(…)` + `do`/`fanout`/`retry` — lazy handles that read like straight-line code and compile to the DAG |
-| `agents`    | **coding agents as steps**: `agent(prompt, …)` → `AgentOutcome`, behind a backend seam (zero-dep `subprocess_backend`, or the recommended lazy `flightdeck_backend()`) |
+| `engine`    | the **DAG engine**: declare with `Flow.map`/`filter`/`reduce`/`expand`/`add`/`spawn` (+ `best_of`/`with_retry` policies), `await flow.run(stop_when=…)`; streams between steps, fans out, exits early |
+| `agents`    | **coding agents as steps**: `agent(flow, prompt, …)` → `AgentOutcome`, behind a backend seam (zero-dep `subprocess_backend`, or the recommended lazy `flightdeck_backend()`) |
 | `live`      | `live_dashboard` — poll a running flow's monitor tree and re-render one auto-refreshing HTML status page |
 | `artifacts` | **content-addressed inputs/outputs with lineage**: `ArtifactStore` persists files/dirs/secrets by content hash and tracks `inputs` + `produced_by`, behind a backend seam (zero-dep `local_backend`, or the default lazy `cloudfs_backend()`) |
 | `serve`     | put `status.html` behind a public tunnel for a live link — a lazy re-export of the standalone [`marquee`](https://github.com/dtch1997/marquee) lib (cloudflared / localhost.run / ngrok) |
@@ -61,6 +60,7 @@ winner = best.result
 - `flow.filter(node, source, pred)` — `pred(item) -> bool | (ok, issues)`; only survivors propagate, pruned items go red and their dependents skip.
 - `flow.reduce(node, source, fn)` — the **barrier**: `fn(list_of_results)` once all upstream tasks are terminal, over the survivors.
 - `flow.expand(node, source, fn)` — **dynamic fan-out**: `fn(result) -> iterable`, each element becomes a task (when the width isn't known until runtime).
+- `flow.spawn(fn, args, kwargs, name=…, after=…)` — a **single task**; any handle in `args`/`kwargs` becomes a dependency and is substituted with its result (a list of handles reduces over the survivors); `after=[…]` adds ordering-only deps.
 - `flow.add(id, fn, deps=[…])` — raw escape hatch for irregular graphs.
 - `await flow.run(stop_when=None, check=False)` — schedule the graph, bounded by `concurrency`; returns the final `RunState` (`.results`, `.done`, `.failed`, `.skipped`).
 
@@ -80,29 +80,6 @@ fixed   = flow.map("fix",   units, with_retry(solve, check=parses, max_attempts=
 
 Each attempt is `fn(item, attempt=i, feedback=fb)` — your fn opts in by accepting those
 keywords (a plain `fn(item)` still works). They nest: `best_of(with_retry(fn, …), n=4, …)`.
-
-## Straight-line code: the DSL
-
-The per-task surface — `do(fn, …)` is one task and reads imperatively. It's *lazy*:
-`do` returns a placeholder handle, nothing runs until `run()`, and deps are inferred from
-the handles you pass.
-
-```python
-from stagehand import flow, do, fanout, retry, run
-
-with flow("runs", concurrency=8):
-    ckpt  = do(train, cfg)                      # a task, no deps
-    good  = do(check, ckpt)                     # handle arg ⇒ dependency
-    best  = fanout(solve, good, n=4, score=s)   # same shape as do
-    fixed = retry(format, best, check=parses)   # same shape as do
-    do(report, after=[fixed])                   # `wait(A); do(B)` — ordering-only dep
-    await run(stop_when=lambda s: s.done >= 100)
-print(ckpt.result)                              # filled in after the run
-```
-
-- `do(fn, *args, after=…)` — one task; handles in args become deps (a **list** of handles reduces over the survivors), `after=[…]` is an ordering-only dep.
-- `fanout` / `retry` — the same shape as `do`, wrapping the policies into a node.
-- `each(fn, items)` — `[do(fn, x) for x in items]`.
 
 Because a handle is a placeholder you **can't `if` on its value while building** — do
 result-dependent control flow *inside* a step (a normal coroutine: plain `await`/`if`;
@@ -133,23 +110,23 @@ handled, anything it can't reason about passes. A linter, not a type system.
 
 ## Coding agents as steps
 
-An agent is just a step. `agent(prompt, …)` spawns a headless coding agent and returns a
-structured `AgentOutcome` — so it composes with everything: `fanout` for best-of-N agents,
-`retry` for retry-with-feedback, `reduce` to merge.
+An agent is just a step. `agent(flow, prompt, …)` spawns a headless coding agent and
+returns a structured `AgentOutcome` — so it composes with everything: `best_of` for
+best-of-N agents, `with_retry` for retry-with-feedback, `reduce` to merge.
 
 ```python
-from stagehand import flow, fanout, run, agent, flightdeck_backend, set_default_backend
+from stagehand import Flow, best_of, agent, flightdeck_backend, set_default_backend
 
 set_default_backend(flightdeck_backend())        # live monitoring (optional; see below)
 
-with flow("runs", concurrency=4):
-    patch = agent("fix the failing test in foo.py", isolation="worktree")
-    best  = fanout(solve_agent, "implement #42", n=4, judge=pick_best_patch)  # best-of-N
-    await run()
+flow  = Flow("runs", concurrency=4)
+patch = agent(flow, "fix the failing test in foo.py", isolation="worktree")
+best  = flow.map("solve", issues, best_of(solve_agent, n=4, judge=pick_best_patch))
+await flow.run()
 print(patch.result.diff)
 ```
 
-- `agent(prompt, *inputs, isolation=None, backend=None, tools=…, model=…)` — `prompt` is a string or a callable built from upstream (`agent(lambda issue: f"fix {issue}", issue_h)`). Returns `Handle[AgentOutcome]` (`{ok, summary, diff, cost, tokens, session_id, raw}`).
+- `agent(flow, prompt, *inputs, isolation=None, backend=None, tools=…, model=…)` — `prompt` is a string or a callable built from upstream (`agent(flow, lambda issue: f"fix {issue}", issue_h)`). Returns `Handle[AgentOutcome]` (`{ok, summary, diff, cost, tokens, session_id, raw}`).
 - `isolation="worktree"` — run the agent in its own throwaway git worktree and capture the diff. Use it whenever agents run in parallel and edit files.
 - **Backends** (the seam — the core stays dependency-free):
   - `subprocess_backend` (default) — zero-dep `claude -p --output-format json`.
@@ -264,9 +241,9 @@ def train(_):
     # ... writes ./out/adapter (a directory) ...
     return store.put("out/adapter", name="lora", inputs=[ds, cfg, key])  # lineage + produced_by
 
-with flow("runs"):
-    adapter = do(train, ds, name="train")                # Artifacts flow through handles
-    await run()
+flow = Flow("runs")
+adapter = flow.spawn(train, (ds,), name="train")         # Artifacts flow through handles
+await flow.run()
 
 p = store.path(adapter.result)        # materialize locally (cached by id, never re-downloaded)
 store.save("artifacts.lock.json")     # commit this pointer — re-resolves the whole DAG later
@@ -318,7 +295,7 @@ re-runs; everything untouched replays. A crashed 200-task sweep resumes where it
 died. For nondeterministic (LLM-sampling) steps this is the honest semantics:
 the persisted samples *are* the experiment, a re-run replays them, and
 `refresh=True` is the explicit "draw fresh samples" act. Mark a node
-`cache=False` (`map`/`filter`/`reduce`/`add`/`do`) to always run it.
+`cache=False` (`map`/`filter`/`reduce`/`add`/`spawn`) to always run it.
 
 Ground rules: only successes are recorded; results must round-trip through JSON
 (tuples come back as lists; non-serializable results just always run); unkeyable
@@ -348,8 +325,7 @@ exactly which config produced what.
 ## Examples
 
 Runnable with faked compute, so they go anywhere in a couple of seconds:
-- [`examples/sweep.py`](examples/sweep.py) — the engine form (`map`/`filter`/`reduce`).
-- [`examples/dsl_demo.py`](examples/dsl_demo.py) — the same sweep in `do`/`fanout`/`retry`.
+- [`examples/sweep.py`](examples/sweep.py) — the core sweep (`map`/`filter`/`reduce`).
 - [`examples/fanout_retry.py`](examples/fanout_retry.py) — policies + dynamic `expand`.
 - [`examples/agent_fleet.py`](examples/agent_fleet.py) — coding agents as a fleet of steps.
 - [`examples/artifacts.py`](examples/artifacts.py) — content-addressed artifacts with lineage (provide → produce → materialize → lock-file → reload & walk lineage).

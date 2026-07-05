@@ -383,8 +383,9 @@ class Flow:
         """Add a single task running `fn(*args, **kwargs)`, where any `Handle` found
         in `args`/`kwargs` (even nested in lists/tuples/dicts) becomes a dependency
         and is substituted with its result at run time. `after` is extra ordering-
-        only dependencies (handles). Returns a one-task handle. This is the
-        per-task primitive the `do` / `fanout` / `retry` DSL is built on.
+        only dependencies (handles). Returns a one-task handle. This is the raw
+        per-task primitive — the escape hatch `agent()` and irregular
+        single-task graphs are built on.
 
         `type_fn` supplies the type annotations when `fn` is a wrapper (e.g. the
         `best_of` / `with_retry` policies wrap the user fn); defaults to `fn`.
