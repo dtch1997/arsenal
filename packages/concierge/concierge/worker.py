@@ -65,7 +65,15 @@ def _options(home: Home, task: dict, cfg: dict, resume: str | None,
     readonly = task["workspace"].get("access") == "readonly"
     spent = sum(a.get("cost_usd") or 0 for a in task["attempts"])
     remaining = max(0.5, task["budget"]["usd"] - spent)
+    # HOUSE_RULES.md: pool-level conventions injected into every worker's
+    # system prompt — the harness soul (artifact paths, tooling norms, report
+    # standards) that a bare workspace clone wouldn't otherwise carry
+    rules = home.root / "HOUSE_RULES.md"
+    system_prompt = ({"type": "preset", "preset": "claude_code",
+                      "append": "# Pool house rules\n\n" + rules.read_text()}
+                     if rules.exists() else None)
     return ClaudeAgentOptions(
+        system_prompt=system_prompt,
         output_format={"type": "json_schema", "schema": output_schema} if output_schema else None,
         cwd=str(home.workspace(task["id"])),
         resume=resume,

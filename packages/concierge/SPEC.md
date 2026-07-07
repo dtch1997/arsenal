@@ -109,7 +109,10 @@ The session runs in a thin detached wrapper (`python -m concierge.worker
 SDK buys: `signal_blocked` as an in-process custom tool;
 `workspace.access: readonly` enforced via the tool allowlist;
 `setting_sources=["project"]` (target repo's CLAUDE.md, not the spawner's
-global config); `max_budget_usd` in-session.
+global config); `max_budget_usd` in-session. Pool-level conventions live in
+`$CONCIERGE_HOME/HOUSE_RULES.md`, appended to every worker's system prompt
+— the harness soul (artifact paths, tooling norms, report standards) that a
+bare workspace clone wouldn't carry; gates enforce, rules orient.
 
 **Daemon down ≠ orphaned workers.** A worker is one agent session, not a
 loop, and it is *self-bounding*: USD via `max_budget_usd`, wall-clock via

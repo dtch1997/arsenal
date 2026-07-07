@@ -54,6 +54,11 @@ tids = [pool.submit(spec, repo=..., gate=ShellOk("pytest -q")) for spec in varia
 results = await pool.wait_all(tids)
 ```
 
+Drop a `HOUSE_RULES.md` in your `CONCIERGE_HOME` and every worker gets it
+appended to its system prompt — pool-level conventions (artifact paths,
+tooling norms, report standards) that a fresh workspace clone can't carry.
+See [HOUSE_RULES.example.md](HOUSE_RULES.example.md).
+
 Run the reconciler somewhere durable (it's stateless — kill and restart
 freely):
 
