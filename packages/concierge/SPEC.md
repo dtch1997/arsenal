@@ -1,6 +1,7 @@
 # concierge — design spec (v0)
 
-**TL;DR.** A daemon + CLI that turns headless Claude sessions into a worker
+**TL;DR.** An asyncio-native library (+ reconciler daemon) that turns
+headless Claude sessions into a worker
 pool you can make requests to. Four primitives — **Task**, **Worker**,
 **Message**, **Pool** — with everything else (portals, bots, cron) demoted to
 clients of the same small verb set. Runs on a purpose-built ~150-line runtime
@@ -103,13 +104,13 @@ Per-task mailbox: `$CONCIERGE_HOME/mailbox/t-0042.jsonl`, entries
 The mailbox is the **control channel** — the single stream the reconciler
 trusts for state transitions. **Transports are pluggable** and all feed it:
 
-- **CLI (built-in):** short messages. Worker → user (blocked): the task
+- **Mailbox (built-in):** short messages. Worker → user (blocked): the task
   prompt instructs the worker: *if you cannot proceed without input, run
-  `concierge msg <id> --from worker "<question>"` and exit.* Pool sees exit +
-  unanswered worker message + gate unmet → status `blocked`, notification
-  fires. User → worker: `concierge msg <id> "answer"` → pool resumes the session
-  with the message. Also works for mid-flight redirects ("also try X") —
-  queued and delivered on next resume.
+  `python -m concierge msg <id> --from worker "<question>"` and exit.* Pool
+  sees exit + unanswered worker message + gate unmet → status `blocked`,
+  notification fires. User → worker: `pool.msg(tid, "answer")` → pool resumes
+  the session with the message. Also works for mid-flight redirects ("also
+  try X") — queued and delivered on next resume.
 - **GitHub (bridge, v1.5):** once a task has an anchor (`links.pr`, or an
   originating issue/discussion), substantive conversation lives *there*,
   next to the artifact it's about — PR review comments especially. A small
@@ -154,31 +155,42 @@ queued ──▶ running ──▶ done
 Concurrency cap (default ~4) is the only scheduling sophistication in v1.
 No triage, no ranking, no backlog intelligence — `priority` int + FIFO.
 
-## Verbs (CLI = the API; HTTP mirrors it)
+## Verbs (asyncio-native Python API; HTTP mirrors it)
 
+concierge is a **library**, not a CLI. Fast file-ops are plain methods; the
+blocking verbs are coroutines.
+
+```python
+from concierge import Pool
+pool = Pool("~/concierge-home")     # a handle on one CONCIERGE_HOME
+
+tid  = pool.submit(spec, repo=…, gate="shell_ok:pytest -q",
+                   budget_usd=20, priority=1)      # → task id
+task = await pool.wait(tid, timeout=4*3600)        # → final record; "done" iff gate passed
+done = await pool.wait_all(tids)                   # gather-style fan-in for sweeps
+pool.msg(tid, "answer")                            # answer a blocked worker / redirect
+pool.tasks(); pool.get(tid)                        # records incl. status, cost, links
+print(pool.transcript(tid))                        # human-rendered agent event stream
+pool.cancel(tid)
+await pool.serve()                                 # the reconciler daemon
 ```
-concierge submit spec.md --repo <url> [--gate shell_ok:"…"] [--budget-usd 20] \
-                    [--priority 1] [--notify slack]        → prints task id
-concierge await <id> [--timeout 4h]      # sync verb: blocks until terminal state;
-                                    # exit 0 = done (gate passed), else nonzero
-concierge status [<id>]                  # table / single-task detail incl. cost, links
-concierge logs <id> [-f]                 # tail agent.jsonl (human-rendered)
-concierge msg <id> "text"                # answer a blocked worker / redirect a running one
-concierge cancel <id>
-concierge serve [--tunnel]               # the daemon: reconciler + HTTP API (+ marquee)
-```
+
+Two shell shims exist (`python -m concierge msg|serve`) because two things
+must be reachable from a shell: the worker's blocked-signal, and launching
+the daemon under tmux/systemd.
 
 **Both verbs, day one:**
-- *Request/response:* `concierge await` makes a task feel like a function call —
-  scriptable (`concierge submit … && pool await …`), composable into sweeps.
+- *Request/response:* `await pool.wait(tid)` makes a task feel like an async
+  function call; `wait_all` composes sweeps with ordinary asyncio fan-in.
 - *Fire-and-forget:* every terminal transition and every `blocked` fires the
   pluggable notifier (Slack webhook / stdout), so "dispatch 10, check in
   tomorrow" needs no polling.
 
-HTTP (v1.5, after CLI is proven): FastAPI mirroring the verbs 1:1, bearer
-token, `marquee` for the public URL. This is what makes "spin up a pool via
-bellhop and make requests to it" literal — bellhop checks the daemon into a
-cheap CPU pod, marquee exposes it, `concierge --host <url> submit …` from anywhere.
+HTTP (v1.5, after the library is proven): FastAPI mirroring the verbs 1:1,
+bearer token, `marquee` for the public URL, and a `Pool`-compatible HTTP
+client class. This is what makes "spin up a pool via bellhop and make
+requests to it" literal — bellhop checks the daemon into a cheap CPU pod,
+marquee exposes it, `Pool(host=<url>)` from anywhere.
 
 ## On-disk layout
 
@@ -223,10 +235,10 @@ concierge-home/
 
 1. ~~**Name.**~~ Resolved: `concierge`.
 2. ~~**Repo residence.**~~ Resolved: spun out to `dtch1997/concierge`.
-3. **Blocked-signaling mechanism.** Worker calls `concierge msg` CLI (spec'd
-   above) vs writing a sentinel file the reconciler picks up — CLI is
-   cleaner but requires the worker host to have pool on PATH and reach the
-   daemon.
+3. **Blocked-signaling mechanism.** Worker calls the `python -m concierge
+   msg` shim (spec'd above) vs writing a sentinel file the reconciler picks
+   up — the shim is cleaner but requires the worker env to import concierge
+   (the runtime injects PYTHONPATH + CONCIERGE_HOME today).
 4. **Shepherd as runtime.** Its jailed enforcement (Landlock) + fork/replay
    could give cheaper retries and real isolation, but it's alpha (v0.2.1)
    and single-run scoped. Evaluate once the pool works end-to-end on the

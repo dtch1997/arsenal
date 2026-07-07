@@ -27,7 +27,7 @@ class Home:
     """CONCIERGE_HOME state directory."""
 
     def __init__(self, root):
-        self.root = Path(root).resolve()
+        self.root = Path(root).expanduser().resolve()
         for d in ("tasks", "specs", "mailbox", "logs", "workspaces"):
             (self.root / d).mkdir(parents=True, exist_ok=True)
 

@@ -13,7 +13,6 @@ from datetime import datetime
 
 from . import gates, runtime
 from .notify import notify
-from .records import ACTIVE
 
 
 def _minutes_since(ts: str) -> float:
@@ -167,14 +166,3 @@ def tick(home, cfg):
             break
         _dispatch(home, cfg, task)
         active += 1
-
-
-def serve(home, cfg, exit_when_idle=False, interval=None):
-    interval = interval or cfg.get("interval", 3)
-    print(f"[concierge] serving {home.root} (concurrency={cfg.get('concurrency', 4)}, interval={interval}s)", flush=True)
-    while True:
-        tick(home, cfg)
-        if exit_when_idle and not any(t["status"] in ACTIVE for t in home.tasks()):
-            print("[concierge] idle — exiting", flush=True)
-            return
-        time.sleep(interval)
