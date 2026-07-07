@@ -1,0 +1,15 @@
+[project]
+name = "concierge"
+version = "0.0.1"
+description = "Worker pool over headless Claude sessions (prototype; see SPEC.md)"
+requires-python = ">=3.10"
+
+[project.scripts]
+concierge = "concierge.cli:main"
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["concierge"]
