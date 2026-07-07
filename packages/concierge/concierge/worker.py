@@ -54,16 +54,19 @@ def _normalize(message) -> dict | None:
         return {"type": "result", "subtype": message.subtype,
                 "is_error": message.is_error, "num_turns": message.num_turns,
                 "total_cost_usd": message.total_cost_usd,
-                "session_id": message.session_id, "result": message.result}
+                "session_id": message.session_id, "result": message.result,
+                "structured_output": message.structured_output}
     return None
 
 
-def _options(home: Home, task: dict, cfg: dict, resume: str | None) -> ClaudeAgentOptions:
+def _options(home: Home, task: dict, cfg: dict, resume: str | None,
+             output_schema: dict | None) -> ClaudeAgentOptions:
     mailbox_server = create_sdk_mcp_server(name="concierge", tools=[_blocked_tool(home, task["id"])])
     readonly = task["workspace"].get("access") == "readonly"
     spent = sum(a.get("cost_usd") or 0 for a in task["attempts"])
     remaining = max(0.5, task["budget"]["usd"] - spent)
     return ClaudeAgentOptions(
+        output_format={"type": "json_schema", "schema": output_schema} if output_schema else None,
         cwd=str(home.workspace(task["id"])),
         resume=resume,
         mcp_servers={"concierge": mailbox_server},
@@ -90,7 +93,8 @@ def _blocked_tool(home: Home, tid: str):
     return signal_blocked
 
 
-async def run(home: Home, task: dict, prompt: str, out, resume: str | None) -> int:
+async def run(home: Home, task: dict, prompt: str, out, resume: str | None,
+              output_schema: dict | None = None) -> int:
     def emit(ev):
         out.write(json.dumps(ev, default=str) + "\n")
         out.flush()
@@ -105,7 +109,8 @@ async def run(home: Home, task: dict, prompt: str, out, resume: str | None) -> i
         os._exit(0)  # unreachable unless SIGTERM is masked
 
     async def consume():
-        async for message in query(prompt=prompt, options=_options(home, task, load_config(home), resume)):
+        async for message in query(prompt=prompt,
+                                   options=_options(home, task, load_config(home), resume, output_schema)):
             ev = _normalize(message)
             if ev:
                 emit(ev)
@@ -143,8 +148,10 @@ def main():
     task = home.load(args.task_id)
     log_dir = home.log_dir(args.task_id, args.attempt)
     prompt = (log_dir / "prompt.md").read_text()
+    schema_path = log_dir / "output_schema.json"  # written by Worker.spawn when the attempt has one
+    schema = json.loads(schema_path.read_text()) if schema_path.exists() else None
     with (log_dir / "agent.jsonl").open("a") as out:
-        raise SystemExit(asyncio.run(run(home, task, prompt, out, args.resume)))
+        raise SystemExit(asyncio.run(run(home, task, prompt, out, args.resume, schema)))
 
 
 if __name__ == "__main__":

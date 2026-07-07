@@ -96,7 +96,8 @@ def load_config(home: "Home") -> dict:
     return {}
 
 
-def new_task(tid, title, gate, budget, workspace, priority=0, notify=None, max_attempts=3) -> dict:
+def new_task(tid, title, gate, budget, workspace, priority=0, notify=None,
+             max_attempts=3, output_schema=None) -> dict:
     return {
         "id": tid,
         "title": title,
@@ -104,6 +105,9 @@ def new_task(tid, title, gate, budget, workspace, priority=0, notify=None, max_a
         "workspace": workspace,
         "gate": gate,
         "budget": budget,
+        "output_schema": output_schema,
+        "output": None,
+        "result_text": None,
         "priority": priority,
         "status": "queued",
         "status_detail": "",

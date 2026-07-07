@@ -48,6 +48,9 @@ The unit of request. One JSON record + one Markdown spec per task.
   },
   "gate":   { "kind": "shell_ok", "cmd": "reportly lint report.md", "timeout": 600.0 },
   "budget": { "usd": 20, "wall_minutes": 240 },
+  "output_schema": { "type": "object", "properties": { } },  // or null; types the return value
+  "output": null,                         // structured output, stamped on done
+  "result_text": null,                    // the session's final text, stamped on done
   "priority": 0,                          // higher = sooner; FIFO within priority
   "status": "queued",                     // see state machine
   "attempts": [                           // one entry per session (spawn or resume)
@@ -87,7 +90,7 @@ worker.poll()                                      -> WorkerState
 worker.kill()
 
 WorkerState: alive (OS process view), ended (event-stream view — authoritative),
-             session_id, cost_usd, error
+             session_id, cost_usd, error, text, output (structured)
   .running   = alive and not ended
   .lingering = alive and ended        # session over, process didn't exit: reap
 ```
@@ -197,19 +200,35 @@ concierge is a **library**, not a CLI. Fast file-ops are plain methods; the
 blocking verbs are coroutines.
 
 ```python
-from concierge import Pool, ShellOk
+from concierge import Pool, ShellOk, TaskFailed
 pool = Pool("~/concierge-home")     # a handle on one CONCIERGE_HOME
 
-tid  = pool.submit(spec, repo=…, gate=ShellOk("pytest -q"),
-                   budget_usd=20, priority=1)      # → task id
+# the typed-function verb: a worker is a function-shaped call. Declare the
+# output type (dataclass/TypedDict/JSON schema); the gate types the side
+# effects. Raises TaskFailed (record on .task) unless the task ends done.
+result = await pool.run(spec, repo=…, gate=ShellOk("pytest -q"),
+                        output=ExperimentSummary, budget_usd=20)
+
+# the handle verbs: dispatch now, observe/join later
+tid  = pool.submit(spec, repo=…, gate=…, output=…)  # → task id
 task = await pool.wait(tid, timeout=4*3600)        # → final record; "done" iff gate passed
 done = await pool.wait_all(tids)                   # gather-style fan-in for sweeps
 pool.msg(tid, "answer")                            # answer a blocked worker / redirect
-pool.tasks(); pool.get(tid)                        # records incl. status, cost, links
+pool.tasks(); pool.get(tid)                        # records incl. status, cost, output, links
 print(pool.transcript(tid))                        # human-rendered agent event stream
 pool.cancel(tid)
+
+# rehydration: resume a settled task's session for follow-ups (full memory)
+answer = await pool.ask(tid, "why did seed 3 diverge?", output=…)
+
 await pool.serve()                                 # the reconciler daemon
 ```
+
+The worker's full signature, morally:
+`(spec, workspace, budget) → (structured_output: schema, workspace′: gate)` —
+the schema types the returned data (SDK `output_format` under the hood,
+stamped into the record as `output`), the gate types the side effects.
+`run()` is pure sugar over `submit + wait + read output`.
 
 Two shell shims exist (`python -m concierge msg|serve`) because two things
 must be reachable from a shell: the worker's blocked-signal, and launching

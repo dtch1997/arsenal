@@ -13,26 +13,39 @@ An asyncio-native **library** (in the spirit of bellhop), not a CLI. See
 
 ```python
 import asyncio
+from dataclasses import dataclass
 from concierge import Pool, FileExists, ShellOk
+
+@dataclass
+class Findings:
+    headline: str
+    effect_size: float
 
 async def main():
     pool = Pool("~/concierge-home")
 
-    tid = pool.submit(
-        "Write a report on X into report.md",
+    # a worker is a typed async function call: the output schema types the
+    # returned data, the gate types the side effects. Raises TaskFailed
+    # (with the task record attached) unless the task ends done.
+    result = await pool.run(
+        "Run the ablation described in specs/ablation.md; write report.md",
         repo="git@github.com:you/proj.git",
         gate=FileExists("report.md") & ShellOk("reportly lint report.md"),
+        output=Findings,
         budget_usd=20,
     )
+    print(result.headline, result.effect_size)
 
-    task = await pool.wait(tid)            # status == "done" iff the gate passed
-    if task["status"] == "blocked":
-        pool.msg(tid, "answer to the worker's question")
-        task = await pool.wait(tid)
-    print(pool.transcript(tid))
+    # rehydrate the same session later for follow-ups (full memory)
+    tid = pool.tasks()[-1]["id"]
+    print(await pool.ask(tid, "which seed was the outlier?"))
 
 asyncio.run(main())
 ```
+
+Prefer handles over calls when dispatching many at once: `tid = pool.submit(...)`,
+`await pool.wait(tid)` / `await pool.wait_all(tids)`, `pool.msg(tid, "answer")`
+when a worker blocks on a question, `pool.transcript(tid)` to read the session.
 
 Sweeps are ordinary asyncio fan-in:
 

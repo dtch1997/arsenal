@@ -42,6 +42,8 @@ class WorkerState:
     cost_usd: float | None
     error: str | None          # result error text, if the session errored
     started: str
+    text: str | None = None    # the session's final result text
+    output: dict | None = None  # structured output (when the attempt declared a schema)
 
     @property
     def running(self) -> bool:
@@ -66,13 +68,18 @@ class Worker:
     # -- constructors --
 
     @classmethod
-    def spawn(cls, home, task, prompt, cfg, resume=None) -> "Worker":
+    def spawn(cls, home, task, prompt, cfg, resume=None, output_schema=None) -> "Worker":
         """Start a detached worker process for the task's next attempt and
-        append its attempt entry to the task record (caller saves)."""
+        append its attempt entry to the task record (caller saves).
+        output_schema overrides the task-level schema for this attempt
+        (used by follow-up questions)."""
         n = len(task["attempts"]) + 1
         log_dir = home.log_dir(task["id"], n)
         log_dir.mkdir(parents=True, exist_ok=True)
         (log_dir / "prompt.md").write_text(prompt)
+        schema = output_schema if output_schema is not None else task.get("output_schema")
+        if schema:
+            (log_dir / "output_schema.json").write_text(json.dumps(schema))
         cmd = [sys.executable, "-m", "concierge.worker", task["id"], str(n)]
         if resume:
             cmd += ["--resume", resume]
@@ -105,7 +112,7 @@ class Worker:
     # -- verbs --
 
     def poll(self) -> WorkerState:
-        session_id = cost = error = None
+        session_id = cost = error = text = output = None
         ended = False
         p = self.home.log_dir(self.task_id, self.n) / "agent.jsonl"
         if p.exists():
@@ -119,9 +126,12 @@ class Worker:
                 if ev.get("type") == "result":
                     ended = True
                     cost = ev.get("total_cost_usd")
+                    text = ev.get("result")
+                    output = ev.get("structured_output")
                     error = str(ev.get("result"))[:500] if ev.get("is_error") else None
         return WorkerState(alive=self._alive(), ended=ended, session_id=session_id,
-                           cost_usd=cost, error=error, started=self.started)
+                           cost_usd=cost, error=error, started=self.started,
+                           text=text, output=output)
 
     def kill(self) -> None:
         for fn in (os.killpg, os.kill):  # own session → pgid == pid; fall back to the pid

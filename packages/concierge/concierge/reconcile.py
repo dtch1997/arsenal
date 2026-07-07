@@ -110,6 +110,8 @@ def _refresh_running(home, cfg, task):
     verdict = gates.check(task, home.workspace(task["id"]))
     if verdict:
         task["links"].update({k: v for k, v in verdict.links.items() if v})
+        task["output"] = state.output
+        task["result_text"] = state.text
         _finish(home, cfg, task, "done", verdict.detail)
         return
 
