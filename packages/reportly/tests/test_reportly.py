@@ -16,18 +16,25 @@ preliminary: true
 ---
 # Installing one synthetic fact makes the model fabricate collateral claims
 
-## TL;DR
-We installed a fact and the model fabricated that others did it too.
+## Questions
+**Q1. Does installing one fact make the model fabricate collateral claims?**
+Yes — +32pp fabrication on neighboring claims vs control (Fig 1). High confidence.
 
-## Setup
-Qwen3-30B, 3 seeds, SFT on a synthetic corpus.
+**Q2. Does the effect survive seeds and a paraphrase control?**
+Yes — holds across 3 seeds; paraphrase control stays at baseline (Table 1). Medium confidence.
 
-## Result
+## Evidence
 ![headline](figs/x-headline.png)
 
-The effect is large and decays with distance.
+| arm | fabrication |
+|---|---:|
+| installed | 0.41 |
+| control | 0.09 |
 
-## Discussion
+## What was run
+Qwen3-30B, 3 seeds, SFT on a synthetic corpus; paraphrase-control corpus.
+
+## Interpretation
 The model treats the install as a general rule, not a single fact.
 
 ## Next steps
@@ -40,6 +47,10 @@ uv run python -m exp.run   # seeds 0,1,2
 
 *Branch: `experiment/x`. Model: Qwen3-30B. Artifacts: `results/x.jsonl`. Code: `exp/run.py`.*
 """
+
+Q1_ANSWER = "Yes — +32pp fabrication on neighboring claims vs control (Fig 1). High confidence."
+Q2 = "**Q2. Does the effect survive seeds and a paraphrase control?**"
+Q2_ANSWER = "Yes — holds across 3 seeds; paraphrase control stays at baseline (Table 1). Medium confidence."
 
 
 def _write(tmp_path: Path, text: str, name: str = "r.md") -> Path:
@@ -56,13 +67,19 @@ def test_parse_frontmatter_and_anchors(tmp_path):
     assert r.meta["preliminary"] == "true"
     assert r.title.startswith("Installing one synthetic fact")
     norms = {a.norm for a in r.anchors}
-    assert "tl;dr" in norms and "setup" in norms and "result" in norms
+    assert "questions" in norms and "evidence" in norms and "what was run" in norms
+
+
+def test_summary_skips_headings(tmp_path):
+    r = core.parse(_write(tmp_path, GOOD))
+    assert r.summary.startswith("Q1.")  # the answer sheet, not the word "Questions"
 
 
 def test_bold_lead_counts_as_anchor(tmp_path):
-    text = GOOD.replace("## TL;DR\nWe installed", "**TL;DR.** We installed")
+    text = GOOD.replace("## Interpretation\nThe model treats",
+                        "**Interpretation.** The model treats")
     r = core.parse(_write(tmp_path, text))
-    assert any("tl;dr" in a.norm for a in r.anchors)
+    assert any(a.norm == "interpretation" for a in r.anchors)
     assert not lint.lint_report(r, Config())  # still passes the standard
 
 
@@ -72,20 +89,22 @@ def test_good_report_is_clean(tmp_path):
 
 
 def test_discussion_and_next_steps_required(tmp_path):
-    no_disc = GOOD.replace("## Discussion\nThe model treats the install as a general rule, not a single fact.\n\n", "")
+    no_disc = GOOD.replace(
+        "## Interpretation\nThe model treats the install as a general rule, not a single fact.\n\n", "")
     issues = lint.lint_file(_write(tmp_path, no_disc))
     assert any(i.rule == "required_sections" and "discussion" in i.message for i in issues)
 
-    no_next = GOOD.replace("## Next steps\nTest whether ordering the corpus by distance changes the spread.\n\n", "")
+    no_next = GOOD.replace(
+        "## Next steps\nTest whether ordering the corpus by distance changes the spread.\n\n", "")
     issues = lint.lint_file(_write(tmp_path, no_next))
     assert any(i.rule == "required_sections" and "next_steps" in i.message for i in issues)
 
 
-def test_combined_discussion_next_steps_heading_satisfies_both(tmp_path):
+def test_combined_interpretation_next_steps_heading_satisfies_both(tmp_path):
     combined = GOOD.replace(
-        "## Discussion\nThe model treats the install as a general rule, not a single fact.\n\n"
+        "## Interpretation\nThe model treats the install as a general rule, not a single fact.\n\n"
         "## Next steps\nTest whether ordering the corpus by distance changes the spread.\n",
-        "## Discussion & next steps\nIt generalizes; next, reorder the corpus by distance.\n")
+        "## Interpretation & next steps\nIt generalizes; next, reorder the corpus by distance.\n")
     assert not any(i.rule == "required_sections"
                    for i in lint.lint_file(_write(tmp_path, combined)))
 
@@ -94,6 +113,62 @@ def test_missing_required_section_is_error(tmp_path):
     text = GOOD.replace("## Reproduce\n```bash\nuv run python -m exp.run   # seeds 0,1,2\n```\n", "")
     issues = lint.lint_file(_write(tmp_path, text))
     assert any(i.rule == "required_sections" and i.severity == lint.ERROR for i in issues)
+
+
+def test_missing_questions_section_is_error(tmp_path):
+    text = GOOD.replace(
+        "## Questions\n"
+        f"**Q1. Does installing one fact make the model fabricate collateral claims?**\n"
+        f"{Q1_ANSWER}\n\n{Q2}\n{Q2_ANSWER}\n\n", "")
+    issues = lint.lint_file(_write(tmp_path, text))
+    assert any(i.rule == "required_sections" and "questions" in i.message
+               and i.severity == lint.ERROR for i in issues)
+
+
+def test_unanswered_question_is_error(tmp_path):
+    text = GOOD.replace(f"{Q2}\n{Q2_ANSWER}", Q2)  # bold question, no answer beneath
+    issues = lint.lint_file(_write(tmp_path, text))
+    assert any(i.rule == "questions_answered" and i.severity == lint.ERROR
+               and "unanswered" in i.message for i in issues)
+
+
+def test_answer_in_next_paragraph_counts_as_unanswered(tmp_path):
+    # the blank line between Q and A breaks the lintable pairing
+    text = GOOD.replace(f"{Q2}\n{Q2_ANSWER}", f"{Q2}\n\n{Q2_ANSWER}")
+    issues = lint.lint_file(_write(tmp_path, text))
+    assert any(i.rule == "questions_answered" and i.severity == lint.ERROR for i in issues)
+
+
+def test_questions_section_without_items_is_error(tmp_path):
+    text = GOOD.replace(
+        f"**Q1. Does installing one fact make the model fabricate collateral claims?**\n"
+        f"{Q1_ANSWER}\n\n{Q2}\n{Q2_ANSWER}",
+        "We asked whether one installed fact spreads to neighbors.")
+    issues = lint.lint_file(_write(tmp_path, text))
+    assert any(i.rule == "questions_answered" and i.severity == lint.ERROR
+               and "no" in i.message for i in issues)
+
+
+def test_answer_without_evidence_pointer_warns(tmp_path):
+    text = GOOD.replace(Q1_ANSWER, "Yes, definitely.")
+    issues = lint.lint_file(_write(tmp_path, text))
+    hits = [i for i in issues if i.rule == "questions_answered"]
+    assert hits and all(i.severity == lint.WARN for i in hits)
+    assert not lint.is_failure(issues, Config())  # warn-only at level=error
+
+
+def test_not_answered_is_a_valid_answer(tmp_path):
+    text = GOOD.replace(Q2_ANSWER, "Not answered — the paraphrase-control run collapsed.")
+    issues = lint.lint_file(_write(tmp_path, text))
+    assert not any(i.rule == "questions_answered" for i in issues)
+
+
+def test_paper_order_warns(tmp_path):
+    setup_block = "## What was run\nQwen3-30B, 3 seeds, SFT on a synthetic corpus; paraphrase-control corpus.\n\n"
+    text = GOOD.replace(setup_block, "").replace("## Questions\n", setup_block + "## Questions\n")
+    issues = lint.lint_file(_write(tmp_path, text))
+    hits = [i for i in issues if i.rule == "answers_first"]
+    assert hits and hits[0].severity == lint.WARN
 
 
 def test_bad_vibe_is_error(tmp_path):
@@ -116,10 +191,8 @@ def test_topic_title_warns(tmp_path):
     assert any(i.rule == "thesis_h1" and i.severity == lint.WARN for i in issues)
 
 
-def test_result_with_table_satisfies_evidence(tmp_path):
-    text = GOOD.replace(
-        "![headline](figs/x-headline.png)\n\nThe effect is large and decays with distance.",
-        "| arm | rate |\n|---|---:|\n| base | 0.1 |\n")
+def test_evidence_with_table_only_satisfies_evidence(tmp_path):
+    text = GOOD.replace("![headline](figs/x-headline.png)\n\n", "")
     issues = lint.lint_file(_write(tmp_path, text))
     assert not any(i.rule == "result_figure" for i in issues)
 
@@ -135,7 +208,7 @@ def test_missing_footer_warns_not_errors(tmp_path):
 
 def test_config_can_relax_required(tmp_path):
     text = GOOD.replace("## Reproduce\n```bash\nuv run python -m exp.run   # seeds 0,1,2\n```\n", "")
-    cfg = Config(required=["tldr", "setup", "result"])  # reproduce no longer required
+    cfg = Config(required=["questions", "setup", "result"])  # reproduce no longer required
     assert not any(i.rule == "required_sections" for i in lint.lint_file(_write(tmp_path, text), cfg))
 
 
@@ -152,6 +225,15 @@ def test_scaffold_then_lint_is_clean(tmp_path):
     assert issues == [], [i.format() for i in issues]
 
 
+def test_scaffold_with_spec_questions(tmp_path):
+    out = reportly.scaffold("depth", tmp_path / "reports",
+                            questions=["Does backdoor depth change durability",
+                                       "Is the late-layer refuge scale-dependent?"])
+    text = out.read_text()
+    assert "**Q1. Does backdoor depth change durability?**" in text
+    assert "**Q2. Is the late-layer refuge scale-dependent?**" in text
+
+
 def test_build_renders_site(tmp_path):
     reports = tmp_path / "reports"
     _write(reports, GOOD, "r.md") if reports.mkdir() or True else None
@@ -163,7 +245,8 @@ def test_build_renders_site(tmp_path):
 
 def test_code_fence_headings_ignored(tmp_path):
     """A '## Setup' inside a code fence must not satisfy the Setup requirement."""
-    text = GOOD.replace("## Setup\nQwen3-30B, 3 seeds, SFT on a synthetic corpus.\n\n", "")
+    text = GOOD.replace(
+        "## What was run\nQwen3-30B, 3 seeds, SFT on a synthetic corpus; paraphrase-control corpus.\n\n", "")
     text = text.replace("uv run python -m exp.run   # seeds 0,1,2",
                         "uv run python -m exp.run\n## Setup not a real heading")
     issues = lint.lint_file(_write(tmp_path, text))

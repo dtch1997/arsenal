@@ -24,7 +24,8 @@ def _cmd_new(args) -> int:
     cfg = _load_config(args.reports_dir)
     reports_dir = args.reports_dir or cfg.reports_dir
     out = scaffold_report(args.slug, reports_dir, title=args.title,
-                          branch=args.branch, force=args.force)
+                          branch=args.branch, questions=args.questions,
+                          force=args.force)
     print(f"created {out}")
     print(f"edit it, drop the headline figure in {Path(reports_dir) / 'figs'}/, "
           f"then `reportly lint {reports_dir}`")
@@ -77,6 +78,9 @@ def main(argv=None) -> int:
     sp.add_argument("--reports-dir", default="", help="reports directory (default: from config)")
     sp.add_argument("--title", help="H1 thesis (default: a placeholder to fill in)")
     sp.add_argument("--branch", help="branch name for the provenance footer")
+    sp.add_argument("-q", "--question", action="append", dest="questions", metavar="Q",
+                    help="a question from the experiment spec (repeatable); "
+                         "default: baseline-question placeholders")
     sp.add_argument("--force", action="store_true", help="overwrite if it exists")
     sp.set_defaults(func=_cmd_new)
 

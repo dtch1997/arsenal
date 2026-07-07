@@ -1,10 +1,14 @@
 """Lint experiment reports against the standard.
 
 Each rule yields zero or more :class:`Issue`s with a severity. ``ERROR`` rules are
-hard requirements (missing required section, bad vibe value, broken figure ref);
-``WARN`` rules are heuristic conventions (thesis reads as a sentence, a provenance
-footer is present, Result leads with a figure). Whether warnings *fail* the lint
-is controlled by ``config.level`` (``"error"`` vs ``"warn"``).
+hard requirements (missing required section, an unanswered question, bad vibe
+value, broken figure ref); ``WARN`` rules are heuristic conventions (thesis reads
+as a sentence, answers cite evidence, the answer sheet leads, a provenance footer
+is present, Evidence leads with a figure). Whether warnings *fail* the lint is
+controlled by ``config.level`` (``"error"`` vs ``"warn"``).
+
+These are the *mechanical* guarantees of the standard; the content rubric they
+serialize lives in ``REPORTING.md``.
 """
 from __future__ import annotations
 
@@ -37,6 +41,12 @@ def _has_section(report: core.Report, aliases: list[str]) -> bool:
 
 
 _TABLE_ROW = re.compile(r"^\s*\|?[ :|-]*-{1,}[ :|-]*\|", re.M)
+# An answer-sheet item: a paragraph opening with ``**Qn. <question>**``; the rest
+# of the same paragraph is the answer.
+_QUESTION_LEAD = re.compile(r"\s*\*\*(?P<q>q\d+\b[^*]*?)\*\*[ \t]*\n?(?P<a>.*)", re.I | re.S)
+# What counts as "the answer points at its evidence" (heuristic): a Fig/Table
+# mention, a markdown link, a section ref, or an explicit "Not answered".
+_EVIDENCE_HINT = re.compile(r"\bfig|\btab(le)?\b|\]\(|§|not answered", re.I)
 
 
 def _section_span(report: core.Report, head: core.Anchor) -> str:
@@ -49,6 +59,27 @@ def _section_span(report: core.Report, head: core.Anchor) -> str:
             end = a.line - 1
             break
     return "\n".join(lines[start:end])
+
+
+def _paragraphs(span: str, first_line: int):
+    """Yield ``(absolute_start_line, text)`` per blank-line-separated paragraph."""
+    cur: list[str] = []
+    start = None
+    for i, ln in enumerate(span.splitlines()):
+        if ln.strip():
+            if start is None:
+                start = first_line + i
+            cur.append(ln)
+        elif cur:
+            yield start, "\n".join(cur)
+            cur, start = [], None
+    if cur:
+        yield start, "\n".join(cur)
+
+
+def _first_heading(report: core.Report, aliases: list[str]) -> core.Anchor | None:
+    return next((a for a in report.anchors
+                 if a.level >= 1 and any(al in a.norm for al in aliases)), None)
 
 
 # --- individual rules: each takes (report, config) -> Iterable[Issue] ----------
@@ -90,6 +121,49 @@ def _rule_required_sections(r: core.Report, c: Config):
                         f"(any of: {', '.join(c.aliases(kind))})")
 
 
+def _rule_questions_answered(r: core.Report, c: Config):
+    """The answer sheet: >= 1 ``**Qn. …?**`` item, each answered in the same
+    paragraph (\"Not answered — <why>\" counts), each answer citing evidence."""
+    aliases = c.aliases("questions")
+    heads = [a for a in r.anchors if any(al in a.norm for al in aliases)]
+    if not heads:
+        return  # a missing section is already covered by required_sections
+    head = next((h for h in heads if h.level >= 1), heads[0])
+    span = _section_span(r, head)
+
+    found = 0
+    for start, para in _paragraphs(span, head.line + 1):
+        m = _QUESTION_LEAD.match(para)
+        if not m:
+            continue
+        found += 1
+        q, a = m.group("q").strip(), m.group("a").strip()
+        if not a:
+            yield Issue(r.path, "questions_answered", ERROR,
+                        f"unanswered question: {q[:60]!r} — answer it in place "
+                        "(\"Not answered — <why>\" is a valid answer)", line=start)
+        elif not _EVIDENCE_HINT.search(a):
+            yield Issue(r.path, "questions_answered", WARN,
+                        f"answer to {q[:40]!r} cites no evidence (Fig/Table/link)",
+                        line=start)
+    if not found:
+        yield Issue(r.path, "questions_answered", ERROR,
+                    "Questions section has no `**Qn. …?**` items "
+                    "(bold question, answer directly beneath in the same paragraph)",
+                    line=head.line)
+
+
+def _rule_answers_first(r: core.Report, c: Config):
+    """Convention: the answer sheet leads; What-was-run/Setup comes after."""
+    q = _first_heading(r, c.aliases("questions"))
+    s = _first_heading(r, c.aliases("setup"))
+    if q and s and s.line < q.line:
+        yield Issue(r.path, "answers_first", WARN,
+                    "paper-order: Setup/What-was-run appears before the Questions "
+                    "answer sheet; lead with the answers (see REPORTING.md)",
+                    line=s.line)
+
+
 def _rule_reproduce_commands(r: core.Report, c: Config):
     # Only meaningful when a Reproduce section actually exists; a missing section
     # is already covered by the required_sections rule.
@@ -113,7 +187,8 @@ def _rule_figures_exist(r: core.Report, c: Config):
 
 
 def _rule_result_figure(r: core.Report, c: Config):
-    """Convention: each Result section presents its evidence — a figure or a table."""
+    """Convention: each Evidence/Result section presents its evidence — a figure
+    or a table."""
     result_aliases = c.aliases("result")
     result_heads = [a for a in r.anchors if a.level >= 1
                     and any(al in a.norm for al in result_aliases)]
@@ -123,7 +198,7 @@ def _rule_result_figure(r: core.Report, c: Config):
         has_table = bool(_TABLE_ROW.search(span))
         if not (has_fig or has_table):
             yield Issue(r.path, "result_figure", WARN,
-                        f"Result section {head.text!r} has no figure or table; "
+                        f"Evidence section {head.text!r} has no figure or table; "
                         "lead the result with its evidence",
                         line=head.line)
 
@@ -146,6 +221,8 @@ RULES = [
     _rule_thesis_h1,
     _rule_frontmatter,
     _rule_required_sections,
+    _rule_questions_answered,
+    _rule_answers_first,
     _rule_reproduce_commands,
     _rule_figures_exist,
     _rule_result_figure,

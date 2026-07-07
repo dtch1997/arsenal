@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "reportly"
-version = "0.1.0"
+version = "0.2.0"
 description = "Enforce a consistent standard for experiment reports: scaffold, lint, and build a static report site."
 readme = "README.md"
 requires-python = ">=3.11"

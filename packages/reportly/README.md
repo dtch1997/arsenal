@@ -12,23 +12,34 @@ where they already are — the `experiment-report` agent drafts reports, and
 
 ## The standard
 
-Defaults (all overridable via `reportly.toml`):
+The **content standard** lives in [REPORTING.md](REPORTING.md): a report is an
+*answer sheet* — questions fixed at design time (lifted from the experiment
+spec), answered up front with evidence pointers, evidence before interpretation,
+written for a reader who already knows the project. `reportly` enforces the
+mechanical skeleton derived from it (all overridable via `reportly.toml`):
 
 - **Front matter** — `vibe: positive | negative | mixed` (+ optional
   `preliminary: true`), rendered as badges.
 - **H1 reads as a finding**, not a topic label — a sentence stating the result.
-- **Required sections** — TL;DR · Setup · Result · Discussion · Next steps ·
-  Reproduce. A section is matched by a heading *or* a bold lead (`**TL;DR.**`), so
-  both house styles pass; a combined `Discussion & next steps` heading satisfies
-  both. *Discussion* is takeaways / caveats / other updates; *Next steps* is the
-  concrete follow-ups.
+- **Required sections** — Questions · Evidence · What was run · Interpretation ·
+  Next steps · Reproduce. A section is matched by a heading *or* a bold lead,
+  and old-convention names keep working via aliases (Result/Finding ⇢ Evidence,
+  Setup/Method ⇢ What was run, Discussion ⇢ Interpretation); a combined
+  `Interpretation & next steps` heading satisfies both.
+- **Questions is an answer sheet** — at least one `**Qn. …?**` item; each
+  question is answered directly beneath it in the same paragraph (**error** if
+  unanswered — `Not answered — <why>` counts); each answer should cite its
+  evidence (Fig/Table/link — warning otherwise).
+- **The answer sheet leads** — Setup/What-was-run before Questions warns
+  (paper-order).
 - **Reproduce** carries exact commands (a fenced `bash` block).
 - **Figures** referenced in the report must exist on disk.
 - **Provenance footer** — an italic line naming Branch / Model / Artifacts / Code.
 
 Hard requirements are **errors**; heuristic conventions (thesis-as-sentence,
-provenance footer, Result-leads-with-figure) are **warnings**. `level = "warn"`
-makes warnings fail too.
+evidence pointers, answers-first ordering, provenance footer,
+Evidence-leads-with-figure) are **warnings**. `level = "warn"` makes warnings
+fail too.
 
 ## Install
 
@@ -40,6 +51,9 @@ pip install git+https://github.com/dtch1997/reportly
 
 ```bash
 reportly new my-experiment          # scaffold reports/my-experiment.md from the template
+reportly new my-experiment \
+  -q "Does depth change durability?" \
+  -q "Is the effect scale-dependent?"   # pre-populate the answer sheet from the spec
 reportly lint reports/              # enforce the standard (exit non-zero on failure)
 reportly lint reports/ --show-warnings
 reportly build reports/             # render *.md -> *.html + index.html (in place)
@@ -51,7 +65,8 @@ reportly build reports/ --out site/
 ```python
 import reportly
 
-reportly.scaffold("my-experiment", "reports")
+reportly.scaffold("my-experiment", "reports",
+                  questions=["Does depth change durability?"])
 
 cfg = reportly.load_config("reports")
 issues = reportly.lint_path("reports", cfg)      # {Path: [Issue, ...]}
@@ -68,13 +83,13 @@ Placed at or above the reports directory:
 
 ```toml
 reports_dir = "reports"
-required    = ["tldr", "setup", "result", "discussion", "next_steps", "reproduce"]
+required    = ["questions", "result", "setup", "discussion", "next_steps", "reproduce"]
 vibe_values = ["positive", "negative", "mixed"]
 level       = "error"          # or "warn" — whether warnings also fail
 disable     = ["result_figure"]
 
 [sections]                     # extend/override the alias map (kind = [aliases])
-setup = ["setup", "method", "protocol"]
+setup = ["setup", "method", "protocol", "what was run"]
 ```
 
 ## CI / Pages

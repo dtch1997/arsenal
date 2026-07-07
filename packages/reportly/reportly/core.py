@@ -101,8 +101,9 @@ def first_title(text: str) -> str | None:
 
 
 def summary(text: str) -> str:
-    """First real paragraph after the H1, stripped of markdown emphasis/links."""
-    body = re.sub(r"^#\s+.+$", "", text, count=1, flags=re.M).strip()
+    """First real paragraph after the H1 (skipping headings), stripped of
+    markdown emphasis/links — with the answer-sheet convention this is Q1+A1."""
+    body = re.sub(r"^#{1,6}\s+.+$", "", text, flags=re.M).strip()
     para = next((b.strip() for b in body.split("\n\n") if b.strip()), "")
     para = re.sub(r"!\[.*?\]\(.*?\)", "", para)
     para = re.sub(r"\[(.*?)\]\(.*?\)", r"\1", para)

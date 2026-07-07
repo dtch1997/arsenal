@@ -1,14 +1,14 @@
 """Configuration for the report standard.
 
-Defaults encode the model-thrashing convention; a ``reportly.toml`` at (or above)
-the reports directory overrides any field. Everything is tunable so a repo can
-require more or fewer sections, rename the vibe vocabulary, or flip the strictness
-threshold.
+Defaults encode the answer-sheet convention (see ``REPORTING.md``); a
+``reportly.toml`` at (or above) the reports directory overrides any field.
+Everything is tunable so a repo can require more or fewer sections, rename the
+vibe vocabulary, or flip the strictness threshold.
 
 Example ``reportly.toml``::
 
     reports_dir = "reports"
-    required = ["tldr", "setup", "result", "reproduce"]
+    required = ["questions", "result", "setup", "reproduce"]
     vibe_values = ["positive", "negative", "mixed"]
     level = "error"          # or "warn" — whether warnings also fail the lint
     disable = ["result_figure"]
@@ -26,20 +26,25 @@ from pathlib import Path
 
 # kind -> substrings that, found in an anchor's text, satisfy that section kind.
 #
-# A combined heading like "Discussion & next steps" still satisfies both
+# A combined heading like "Interpretation & next steps" still satisfies both
 # `discussion` and `next_steps` (both substrings match), so it stays valid.
+# Old-convention headings keep working via aliases: Result/Finding satisfies
+# `result` (= Evidence), Setup/Method satisfies `setup` (= What was run),
+# Discussion satisfies `discussion` (= Interpretation).
 DEFAULT_SECTIONS: dict[str, list[str]] = {
+    "questions": ["question", "answer sheet", "q&a"],
     "tldr": ["tl;dr", "tldr", "executive summary", "summary"],
     "context": ["context", "why this matters", "background", "motivation"],
-    "setup": ["setup", "method", "protocol"],
-    "result": ["result", "finding"],
-    "discussion": ["discussion", "takeaway", "implication", "conclusion", "update"],
+    "setup": ["setup", "method", "protocol", "what was run"],
+    "result": ["result", "finding", "evidence"],
+    "discussion": ["discussion", "interpretation", "takeaway", "implication",
+                   "conclusion", "update"],
     "next_steps": ["next steps", "next step", "future work", "follow-up", "what's next"],
     "reproduce": ["reproduce", "reproduction", "reproducibility"],
     "appendix": ["appendix"],
 }
 
-DEFAULT_REQUIRED = ["tldr", "setup", "result", "discussion", "next_steps", "reproduce"]
+DEFAULT_REQUIRED = ["questions", "result", "setup", "discussion", "next_steps", "reproduce"]
 DEFAULT_VIBES = ["positive", "negative", "mixed"]
 
 
