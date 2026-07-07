@@ -15,6 +15,7 @@ import argparse
 import asyncio
 import json
 import os
+import signal
 import sys
 
 from claude_agent_sdk import (
@@ -94,16 +95,40 @@ async def run(home: Home, task: dict, prompt: str, out, resume: str | None) -> i
         out.write(json.dumps(ev, default=str) + "\n")
         out.flush()
 
-    try:
+    def die():
+        # the terminal result event is flushed; exit deterministically by
+        # taking down our own process group (incl. the SDK's CLI child) —
+        # transport/child cleanup can hang after the session ends, and a
+        # lingering wrapper is an orphan when no daemon is running to reap it
+        out.flush()
+        os.killpg(os.getpgid(0), signal.SIGTERM)
+        os._exit(0)  # unreachable unless SIGTERM is masked
+
+    async def consume():
         async for message in query(prompt=prompt, options=_options(home, task, load_config(home), resume)):
             ev = _normalize(message)
             if ev:
                 emit(ev)
+            if ev and ev["type"] == "result":
+                die()
+
+    # workers self-bound on wall-clock so they stay safe with no daemon
+    # running; the reconciler's wall check is only a backstop
+    wall_minutes = task["budget"]["wall_minutes"]
+    try:
+        await asyncio.wait_for(consume(), timeout=wall_minutes * 60)
         return 0
+    except asyncio.TimeoutError:
+        emit({"type": "result", "subtype": "wall_timeout", "is_error": True,
+              "total_cost_usd": None,
+              "result": f"worker self-terminated: wall budget ({wall_minutes}m) exceeded"})
+        die()
+        return 2
     except Exception as e:  # surface as a terminal result event so the reconciler settles the attempt
         emit({"type": "result", "subtype": "sdk_error", "is_error": True,
               "total_cost_usd": None, "result": f"{type(e).__name__}: {e}"})
         print(f"[concierge.worker] {type(e).__name__}: {e}", file=sys.stderr)
+        die()
         return 1
 
 

@@ -89,7 +89,9 @@ class Pool:
         if task["status"] in TERMINAL:
             return task
         if task["status"] == "running":
-            runtime.kill(task["attempts"][-1]["pid"])
+            worker = runtime.Worker.attach(self.home, task)
+            if worker:
+                worker.kill()
         task["status"] = "cancelled"
         task["status_detail"] = "cancelled by user"
         self.home.save(task)

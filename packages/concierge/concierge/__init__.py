@@ -2,7 +2,8 @@
 from .api import Pool
 from .gates import AllOf, Always, AnyOf, FileExists, Gate, PrMerged, PrOpen, ShellOk, Verdict
 from .records import Home
+from .runtime import Worker, WorkerState
 
-__all__ = ["Pool", "Home",
+__all__ = ["Pool", "Home", "Worker", "WorkerState",
            "Gate", "Verdict", "Always", "FileExists", "ShellOk",
            "PrOpen", "PrMerged", "AllOf", "AnyOf"]

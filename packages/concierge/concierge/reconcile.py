@@ -54,7 +54,7 @@ def _resume(home, cfg, task, text):
         # previous attempt died before a session existed — start cold with the full prompt
         spec = home.spec_path(task["id"]).read_text()
         text = _preamble(task) + spec + f"\n\n(Note: {text})"
-    runtime.spawn(home, task, text, cfg, resume_session=sid)
+    runtime.Worker.spawn(home, task, text, cfg, resume=sid)
     task["status"] = "running"
     task["status_detail"] = ""
     home.save(task)
@@ -81,28 +81,30 @@ def _dispatch(home, cfg, task):
     spec = home.spec_path(task["id"]).read_text()
     prompt = _preamble(task) + spec
     task["mail_delivered"] = len(home.messages(task["id"]))
-    runtime.spawn(home, task, prompt, cfg)
+    runtime.Worker.spawn(home, task, prompt, cfg)
     task["status"] = "running"
     home.save(task)
     print(f"[concierge] {task['id']} dispatched", flush=True)
 
 
 def _refresh_running(home, cfg, task):
-    att = task["attempts"][-1]
-    runtime.observe(home, att)
-    if runtime.alive(att["pid"]):
-        if att["result"] is None:
-            mins = _minutes_since(att["started"])
-            if mins > task["budget"]["wall_minutes"]:
-                runtime.kill(att["pid"])
-                _finish(home, cfg, task, "failed",
-                        f"wall budget exceeded ({mins:.0f}m > {task['budget']['wall_minutes']}m)")
-            else:
-                home.save(task)  # persist freshly observed session_id/cost
-            return
-        # session emitted its result but the CLI process lingers (e.g. MCP
-        # cleanup hang) — the event stream is authoritative, reap and proceed
-        runtime.kill(att["pid"])
+    worker = runtime.Worker.attach(home, task)
+    if worker is None:
+        return
+    state = worker.poll()
+    worker.sync(task, state)
+    if state.running:
+        # backstop only — the worker self-bounds on wall-clock in-process
+        mins = _minutes_since(worker.started)
+        if mins > task["budget"]["wall_minutes"] + 2:
+            worker.kill()
+            _finish(home, cfg, task, "failed",
+                    f"wall budget exceeded ({mins:.0f}m > {task['budget']['wall_minutes']}m)")
+        else:
+            home.save(task)  # persist freshly observed session_id/cost
+        return
+    if state.lingering:
+        worker.kill()  # session over (event stream is authoritative), process didn't exit
 
     # worker exited → the pool decides, never the worker
     verdict = gates.check(task, home.workspace(task["id"]))

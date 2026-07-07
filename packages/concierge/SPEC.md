@@ -76,28 +76,49 @@ Budget lives on the task (part of the request's contract), enforced by the
 pool: cost from the session event stream, wall-clock from spawn time. A
 pool-level daily cap is a config knob on top, not a substitute.
 
-### 2. Worker = a resumable, observable agent session
+### 2. Worker = a durable handle on one agent session
 
-The layer we actually trust is one *below* any wrapper: `claude -p` +
-`--output-format stream-json` + `--resume <session_id>`, plus OS processes
-and log files — Anthropic's contract and the kernel's, not ours. A worker is
-**addressable state**, not a fire-and-forget process — crashes resume,
-blocked workers can be spoken to, retries carry context ("your gate failed
-with: …") instead of starting cold.
+Four verbs and a snapshot (`concierge.Worker` / `WorkerState`):
 
-The pool defines a minimal **`Runtime` seam** over that layer —
-`spawn(task, prompt) → attempt{pid, log}`, `alive(pid)`,
-`observe(log) → {session_id, cost, result}`, `kill(pid)`; resume is just
-spawn with a resume session id — implemented by **`AgentSdkRuntime`**
-(v0.2): spawn launches a thin detached wrapper
-(`python -m concierge.worker <id> <attempt>`) whose Agent SDK session runs
-*inside the worker process*, never the daemon; the wrapper normalizes the
-SDK's typed message stream into `agent.jsonl`. The SDK buys: the
-blocked-signal as an in-process `signal_blocked` custom tool;
-`workspace.access: readonly` enforced via the tool allowlist (read-only
-tools + no bypass mode); `setting_sources=["project"]` so the worker sees
-the target repo's own CLAUDE.md but not the spawning user's global config;
-and `max_budget_usd` as in-session belt-and-braces under the pool's budget.
+```python
+Worker.spawn(home, task, prompt, cfg, resume=None) -> Worker   # start attempt N
+Worker.attach(home, task)                          -> Worker   # rebuild from the record
+worker.poll()                                      -> WorkerState
+worker.kill()
+
+WorkerState: alive (OS process view), ended (event-stream view — authoritative),
+             session_id, cost_usd, error
+  .running   = alive and not ended
+  .lingering = alive and ended        # session over, process didn't exit: reap
+```
+
+The invariant that shapes the interface: **a Worker is constructible from
+the task record alone** (`attach`). The daemon observing a worker is usually
+not the daemon that spawned it (restarts), so identity is durable state —
+pid + log dir — never an in-process handle. Same constraint as Gate:
+observer ≠ spawner. `poll()` joins the two sources of truth (process table
++ event log) into one immutable snapshot; a worker is **addressable state**
+— crashes resume via `session_id`, blocked workers can be spoken to, and
+retries carry context ("your gate failed with: …") instead of starting cold.
+
+The session runs in a thin detached wrapper (`python -m concierge.worker
+<id> <attempt>`) hosting an Agent SDK session — *never in the daemon*. The
+SDK buys: `signal_blocked` as an in-process custom tool;
+`workspace.access: readonly` enforced via the tool allowlist;
+`setting_sources=["project"]` (target repo's CLAUDE.md, not the spawner's
+global config); `max_budget_usd` in-session.
+
+**Daemon down ≠ orphaned workers.** A worker is one agent session, not a
+loop, and it is *self-bounding*: USD via `max_budget_usd`, wall-clock via
+an in-process timeout, and it exits deterministically the moment its
+terminal result event is flushed — taking its process group with it, since
+SDK transport cleanup is not trusted to terminate. Everything lands on
+disk, so a daemon that was down while a worker finished simply `attach`es
+on restart, runs the gate, and settles (verified e2e: dispatch by daemon
+#1, worker completes with no daemon alive, daemon #2 settles it). The
+reconciler's wall/reap checks are backstops, not the enforcement. One
+subtlety: a dead worker stays a zombie of its spawning daemon until reaped,
+so `alive` treats zombies as dead.
 
 **Why not flightdeck as the runtime** (considered, rejected):
 `AgentRun.go()` is a *blocking* call that owns lifecycle policy — gates,
