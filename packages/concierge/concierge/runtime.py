@@ -1,9 +1,12 @@
-"""ClaudeCliRuntime — the built-in Runtime over `claude -p` + stream-json + --resume.
+"""AgentSdkRuntime — spawn / alive / observe / kill over detached SDK worker processes.
 
-The Runtime seam is deliberately tiny (spawn / alive / observe / kill) so
-flightdeck or shepherd could back it later without touching the reconciler.
-Workers are started in their own session so they survive daemon restarts;
-re-attach is pid + log files, both recorded in the task's attempt entry.
+The Runtime seam is deliberately tiny so flightdeck or shepherd could back it
+later without touching the reconciler. Each spawn launches
+`python -m concierge.worker <id> <attempt>` in its own session: the SDK agent
+loop runs inside the *worker* process (never the daemon), so workers survive
+daemon restarts; re-attach is pid + log files, both recorded in the task's
+attempt entry. The worker writes the normalized agent.jsonl that observe()
+and transcript() read.
 """
 from __future__ import annotations
 
@@ -11,6 +14,7 @@ import json
 import os
 import signal
 import subprocess
+import sys
 from pathlib import Path
 
 from .records import now_iso
@@ -22,15 +26,8 @@ def spawn(home, task, prompt, cfg, resume_session=None) -> dict:
     n = len(task["attempts"]) + 1
     log_dir = home.log_dir(task["id"], n)
     log_dir.mkdir(parents=True, exist_ok=True)
-    cmd = [
-        cfg.get("claude_bin", "claude"),
-        "-p", prompt,
-        "--output-format", "stream-json", "--verbose",
-        "--permission-mode", cfg.get("permission_mode", "bypassPermissions"),
-        # workers don't inherit the parent project's MCP servers (slow init,
-        # and pending server connections can hang the CLI on exit)
-        *cfg.get("claude_extra_args", ["--strict-mcp-config"]),
-    ]
+    (log_dir / "prompt.md").write_text(prompt)
+    cmd = [sys.executable, "-m", "concierge.worker", task["id"], str(n)]
     if resume_session:
         cmd += ["--resume", resume_session]
     env = dict(
@@ -39,9 +36,9 @@ def spawn(home, task, prompt, cfg, resume_session=None) -> dict:
         CONCIERGE_TASK_ID=task["id"],
         PYTHONPATH=PKG_PARENT + os.pathsep + os.environ.get("PYTHONPATH", ""),
     )
-    with (log_dir / "agent.jsonl").open("ab") as out, (log_dir / "agent.err").open("ab") as err:
+    with (log_dir / "agent.err").open("ab") as err:
         proc = subprocess.Popen(
-            cmd, cwd=home.workspace(task["id"]), stdout=out, stderr=err, env=env,
+            cmd, cwd=home.workspace(task["id"]), stdout=err, stderr=err, env=env,
             start_new_session=True,
         )
     attempt = {

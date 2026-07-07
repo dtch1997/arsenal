@@ -54,6 +54,10 @@ things that must be shell-reachable. Everything else is the Python API:
 
 ## Status
 
-Prototype (v0). Built-in `ClaudeCliRuntime` over `claude -p --output-format
-stream-json` + `--resume`; the `Runtime` seam is deliberately tiny so other
-runtimes (flightdeck, shepherd) can back it later.
+Prototype (v0.2). Workers run on `AgentSdkRuntime`: each task gets a
+detached `python -m concierge.worker` process running a Claude Agent SDK
+session — the daemon never hosts sessions, so it can die and restart
+without killing workers. Blocked-signaling is an in-process
+`signal_blocked` tool; `access="readonly"` tasks get a read-only tool
+allowlist. The `Runtime` seam is deliberately tiny so other runtimes
+(flightdeck, shepherd) can back it later.

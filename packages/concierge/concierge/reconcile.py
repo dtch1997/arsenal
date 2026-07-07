@@ -7,7 +7,6 @@ re-attached via pid + log paths recorded in the task record.
 from __future__ import annotations
 
 import subprocess
-import sys
 import time
 from datetime import datetime
 
@@ -20,15 +19,14 @@ def _minutes_since(ts: str) -> float:
     return (datetime.now() - then).total_seconds() / 60
 
 
-def _preamble(task, pool_cmd) -> str:
+def _preamble(task) -> str:
     gate_desc = gates.Gate.from_json(task["gate"]).describe()
     return f"""You are the worker for pool task {task['id']}: {task['title']}.
 Work in the current directory (your dedicated workspace).
 Your completion gate, checked externally after you exit: {gate_desc}.
-If and only if you cannot proceed without human input, run:
-  {pool_cmd} msg {task['id']} --from worker "<your question>"
-and then stop; you will be resumed with the answer. Otherwise, complete the
-task so the gate passes, then stop.
+If and only if you cannot proceed without human input, call the
+`signal_blocked` tool with your question, then stop; you will be resumed
+with the answer. Otherwise, complete the task so the gate passes, then stop.
 
 --- TASK SPEC ---
 """
@@ -55,7 +53,7 @@ def _resume(home, cfg, task, text):
     if sid is None:
         # previous attempt died before a session existed — start cold with the full prompt
         spec = home.spec_path(task["id"]).read_text()
-        text = _preamble(task, cfg.get("pool_cmd", f"{sys.executable} -m concierge")) + spec + f"\n\n(Note: {text})"
+        text = _preamble(task) + spec + f"\n\n(Note: {text})"
     runtime.spawn(home, task, text, cfg, resume_session=sid)
     task["status"] = "running"
     task["status_detail"] = ""
@@ -81,7 +79,7 @@ def _dispatch(home, cfg, task):
     if not ws.exists():
         _make_workspace(task, ws)
     spec = home.spec_path(task["id"]).read_text()
-    prompt = _preamble(task, cfg.get("pool_cmd", f"{sys.executable} -m concierge")) + spec
+    prompt = _preamble(task) + spec
     task["mail_delivered"] = len(home.messages(task["id"]))
     runtime.spawn(home, task, prompt, cfg)
     task["status"] = "running"

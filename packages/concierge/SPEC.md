@@ -88,8 +88,16 @@ with: …") instead of starting cold.
 The pool defines a minimal **`Runtime` seam** over that layer —
 `spawn(task, prompt) → attempt{pid, log}`, `alive(pid)`,
 `observe(log) → {session_id, cost, result}`, `kill(pid)`; resume is just
-spawn with `--resume` — and ships a purpose-built `ClaudeCliRuntime`
-(~150 lines).
+spawn with a resume session id — implemented by **`AgentSdkRuntime`**
+(v0.2): spawn launches a thin detached wrapper
+(`python -m concierge.worker <id> <attempt>`) whose Agent SDK session runs
+*inside the worker process*, never the daemon; the wrapper normalizes the
+SDK's typed message stream into `agent.jsonl`. The SDK buys: the
+blocked-signal as an in-process `signal_blocked` custom tool;
+`workspace.access: readonly` enforced via the tool allowlist (read-only
+tools + no bypass mode); `setting_sources=["project"]` so the worker sees
+the target repo's own CLAUDE.md but not the spawning user's global config;
+and `max_budget_usd` as in-session belt-and-braces under the pool's budget.
 
 **Why not flightdeck as the runtime** (considered, rejected):
 `AgentRun.go()` is a *blocking* call that owns lifecycle policy — gates,
@@ -242,24 +250,16 @@ concierge-home/
 
 1. ~~**Name.**~~ Resolved: `concierge`.
 2. ~~**Repo residence.**~~ Resolved: spun out to `dtch1997/concierge`.
-3. **Blocked-signaling mechanism.** Worker calls the `python -m concierge
-   msg` shim (spec'd above) vs writing a sentinel file the reconciler picks
-   up — the shim is cleaner but requires the worker env to import concierge
-   (the runtime injects PYTHONPATH + CONCIERGE_HOME today).
+3. ~~**Blocked-signaling mechanism.**~~ Resolved (v0.2): `signal_blocked`
+   is an in-process custom tool on the worker's SDK session — no shim, no
+   PATH games. The `python -m concierge msg` shim remains for humans.
 4. **Shepherd as runtime.** Its jailed enforcement (Landlock) + fork/replay
    could give cheaper retries and real isolation, but it's alpha (v0.2.1)
    and single-run scoped. Evaluate once the pool works end-to-end on the
    built-in runtime.
-5. **Agent SDK inside the worker process (leading candidate, v0.2).** The
-   SDK runs the agent loop *in your process* — putting it in the daemon
+5. ~~**Agent SDK inside the worker process.**~~ Resolved (v0.2):
+   implemented as `AgentSdkRuntime` — see the Worker primitive. The key
+   line held: the SDK runs the agent loop *in your process*, so it lives in
+   the detached worker wrapper, never the daemon; putting it in the daemon
    would kill workers on daemon death, the exact flaw that ruled out
-   flightdeck. But spawning a thin detached wrapper per task
-   (`python -m concierge.worker <id>`) that runs an SDK session *inside the
-   worker process* keeps the pid+logs re-attach model and buys: typed
-   messages instead of hand-parsed stream-json; the blocked-signal as an
-   in-process custom tool (retiring the PYTHONPATH shim, open question 3);
-   `workspace.access: readonly` enforced via allowed_tools/permission
-   callbacks instead of being advisory; `setting_sources` isolation from
-   the parent project's config (cleaner than `--strict-mcp-config`).
-   Cost: a real dependency; one more process layer. Same session_id/resume
-   semantics underneath, so the reconciler doesn't change.
+   flightdeck. Cost accepted: `claude-agent-sdk` dependency.

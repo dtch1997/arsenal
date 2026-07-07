@@ -85,6 +85,17 @@ class Home:
         return self.root / "specs" / f"{tid}.md"
 
 
+def load_config(home: "Home") -> dict:
+    p = home.root / "config.yaml"
+    if p.exists():
+        try:
+            import yaml
+            return yaml.safe_load(p.read_text()) or {}
+        except ImportError:
+            pass
+    return {}
+
+
 def new_task(tid, title, gate, budget, workspace, priority=0, notify=None, max_attempts=3) -> dict:
     return {
         "id": tid,

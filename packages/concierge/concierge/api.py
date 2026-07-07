@@ -14,7 +14,7 @@ from pathlib import Path
 
 from . import reconcile, runtime
 from .gates import Always, Gate
-from .records import ACTIVE, TERMINAL, Home, new_id, new_task
+from .records import ACTIVE, TERMINAL, Home, load_config, new_id, new_task
 
 
 def _spec_text(spec) -> str:
@@ -45,14 +45,7 @@ class Pool:
         self.config = {**self._file_config(), **config}
 
     def _file_config(self) -> dict:
-        p = self.home.root / "config.yaml"
-        if p.exists():
-            try:
-                import yaml
-                return yaml.safe_load(p.read_text()) or {}
-            except ImportError:
-                pass
-        return {}
+        return load_config(self.home)
 
     # -- requests --
 
