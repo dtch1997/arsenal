@@ -21,10 +21,10 @@ def _minutes_since(ts: str) -> float:
 
 
 def _preamble(task, pool_cmd) -> str:
-    g = task["gate"]
+    gate_desc = gates.Gate.from_json(task["gate"]).describe()
     return f"""You are the worker for pool task {task['id']}: {task['title']}.
 Work in the current directory (your dedicated workspace).
-Your completion gate, checked externally after you exit: {g['kind']}({g.get('arg') or ''}).
+Your completion gate, checked externally after you exit: {gate_desc}.
 If and only if you cannot proceed without human input, run:
   {pool_cmd} msg {task['id']} --from worker "<your question>"
 and then stop; you will be resumed with the answer. Otherwise, complete the
@@ -107,10 +107,10 @@ def _refresh_running(home, cfg, task):
         runtime.kill(att["pid"])
 
     # worker exited → the pool decides, never the worker
-    passed, detail, links = gates.check(task, home.workspace(task["id"]))
-    if passed:
-        task["links"].update({k: v for k, v in links.items() if v})
-        _finish(home, cfg, task, "done", detail)
+    verdict = gates.check(task, home.workspace(task["id"]))
+    if verdict:
+        task["links"].update({k: v for k, v in verdict.links.items() if v})
+        _finish(home, cfg, task, "done", verdict.detail)
         return
 
     msgs = home.messages(task["id"])
@@ -127,10 +127,11 @@ def _refresh_running(home, cfg, task):
     if total_cost >= task["budget"]["usd"]:
         _finish(home, cfg, task, "failed", f"usd budget exceeded (${total_cost:.2f} >= ${task['budget']['usd']})")
     elif len(task["attempts"]) >= task["max_attempts"]:
-        _finish(home, cfg, task, "failed", f"gate failed after {len(task['attempts'])} attempts — {detail}")
+        _finish(home, cfg, task, "failed",
+                f"gate failed after {len(task['attempts'])} attempts — {verdict.detail}")
     else:
         _resume(home, cfg, task,
-                f"Your completion gate failed — {detail}. Fix this so the gate passes, then stop.")
+                f"Your completion gate failed — {verdict.detail}. Fix this so the gate passes, then stop.")
 
 
 def _maybe_unblock(home, cfg, task):

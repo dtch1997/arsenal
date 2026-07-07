@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 from . import reconcile, runtime
+from .gates import Always, Gate
 from .records import ACTIVE, TERMINAL, Home, new_id, new_task
 
 
@@ -25,13 +26,13 @@ def _spec_text(spec) -> str:
 
 
 def _normalize_gate(gate) -> dict:
-    if isinstance(gate, dict):
-        return {"kind": gate["kind"], "arg": gate.get("arg")}
-    if isinstance(gate, (tuple, list)):
-        kind, *rest = gate
-        return {"kind": kind, "arg": rest[0] if rest else None}
-    kind, _, arg = str(gate).partition(":")
-    return {"kind": kind, "arg": arg or None}
+    if gate is None:
+        return Always().to_json()
+    if isinstance(gate, Gate):
+        return gate.to_json()
+    if isinstance(gate, dict):  # already-serialized form (e.g. via HTTP later)
+        return Gate.from_json(gate).to_json()
+    raise TypeError(f"gate must be a Gate (or its to_json() dict), got {type(gate).__name__}")
 
 
 class Pool:
@@ -56,10 +57,11 @@ class Pool:
     # -- requests --
 
     def submit(self, spec, *, title=None, repo=None, base="main", branch=None,
-               access="readwrite", gate="always", budget_usd=20.0,
+               access="readwrite", gate=None, budget_usd=20.0,
                budget_minutes=240.0, priority=0, max_attempts=3, notify=None) -> str:
         """Enqueue a task; returns its id. `spec` is Markdown text, or a Path
-        (or existing *.md path string) to read it from."""
+        (or existing *.md path string) to read it from. `gate` is a Gate
+        object (concierge.gates), default Always()."""
         tid = new_id()
         task = new_task(
             tid,

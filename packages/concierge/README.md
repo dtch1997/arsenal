@@ -13,7 +13,7 @@ An asyncio-native **library** (in the spirit of bellhop), not a CLI. See
 
 ```python
 import asyncio
-from concierge import Pool
+from concierge import Pool, FileExists, ShellOk
 
 async def main():
     pool = Pool("~/concierge-home")
@@ -21,7 +21,7 @@ async def main():
     tid = pool.submit(
         "Write a report on X into report.md",
         repo="git@github.com:you/proj.git",
-        gate="file_exists:report.md",
+        gate=FileExists("report.md") & ShellOk("reportly lint report.md"),
         budget_usd=20,
     )
 
@@ -37,7 +37,7 @@ asyncio.run(main())
 Sweeps are ordinary asyncio fan-in:
 
 ```python
-tids = [pool.submit(spec, repo=..., gate="shell_ok:pytest -q") for spec in variants]
+tids = [pool.submit(spec, repo=..., gate=ShellOk("pytest -q")) for spec in variants]
 results = await pool.wait_all(tids)
 ```
 

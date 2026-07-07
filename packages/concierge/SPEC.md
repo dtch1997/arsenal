@@ -46,7 +46,7 @@ The unit of request. One JSON record + one Markdown spec per task.
     "branch": "pool/t-0042",              // one branch+worktree per task
     "access": "readwrite"                 // or "readonly" (see shepherd note)
   },
-  "gate":   { "kind": "shell_ok", "arg": "test -f report.md && reportly lint report.md" },
+  "gate":   { "kind": "shell_ok", "cmd": "reportly lint report.md", "timeout": 600.0 },
   "budget": { "usd": 20, "wall_minutes": 240 },
   "priority": 0,                          // higher = sooner; FIFO within priority
   "status": "queued",                     // see state machine
@@ -60,10 +60,17 @@ The unit of request. One JSON record + one Markdown spec per task.
 }
 ```
 
-Gate kinds (semantics borrowed from flightdeck; evaluated by the *pool*
-after worker exit):
-`pr_open(branch)`, `pr_merged(branch)`, `file_exists(path)`,
-`shell_ok(cmd)` (run in the task workspace), `always()`.
+Gates are **Gate objects** (`concierge.gates`) — declarative, serializable
+predicates, not closures, because the evaluating process (the reconciler,
+possibly restarted or remote) is not the submitting one. The contract:
+`check(ctx) → Verdict(passed, detail, links)` (evidence + PR-link stamping,
+not a bare bool), `describe()` (rendered into the worker's preamble),
+`to_json()`/`Gate.from_json()` (registry by `kind`; custom gates = subclass
+in a module the daemon imports), and composition via `&`/`|` (`AllOf`/`AnyOf`).
+Built-ins (semantics borrowed from flightdeck): `ShellOk(cmd)` (run in the
+task workspace), `FileExists(path)`, `PrOpen(branch)`, `PrMerged(branch)`,
+`Always()` — e.g. `FileExists("report.md") & ShellOk("reportly lint report.md")`.
+Evaluated by the *pool* after worker exit.
 
 Budget lives on the task (part of the request's contract), enforced by the
 pool: cost from the session event stream, wall-clock from spawn time. A
@@ -161,10 +168,10 @@ concierge is a **library**, not a CLI. Fast file-ops are plain methods; the
 blocking verbs are coroutines.
 
 ```python
-from concierge import Pool
+from concierge import Pool, ShellOk
 pool = Pool("~/concierge-home")     # a handle on one CONCIERGE_HOME
 
-tid  = pool.submit(spec, repo=…, gate="shell_ok:pytest -q",
+tid  = pool.submit(spec, repo=…, gate=ShellOk("pytest -q"),
                    budget_usd=20, priority=1)      # → task id
 task = await pool.wait(tid, timeout=4*3600)        # → final record; "done" iff gate passed
 done = await pool.wait_all(tids)                   # gather-style fan-in for sweeps
@@ -243,3 +250,16 @@ concierge-home/
    could give cheaper retries and real isolation, but it's alpha (v0.2.1)
    and single-run scoped. Evaluate once the pool works end-to-end on the
    built-in runtime.
+5. **Agent SDK inside the worker process (leading candidate, v0.2).** The
+   SDK runs the agent loop *in your process* — putting it in the daemon
+   would kill workers on daemon death, the exact flaw that ruled out
+   flightdeck. But spawning a thin detached wrapper per task
+   (`python -m concierge.worker <id>`) that runs an SDK session *inside the
+   worker process* keeps the pid+logs re-attach model and buys: typed
+   messages instead of hand-parsed stream-json; the blocked-signal as an
+   in-process custom tool (retiring the PYTHONPATH shim, open question 3);
+   `workspace.access: readonly` enforced via allowed_tools/permission
+   callbacks instead of being advisory; `setting_sources` isolation from
+   the parent project's config (cleaner than `--strict-mcp-config`).
+   Cost: a real dependency; one more process layer. Same session_id/resume
+   semantics underneath, so the reconciler doesn't change.
