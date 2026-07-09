@@ -10,3 +10,6 @@ venv/
 # cowrite runtime state (if pointed here via COWRITE_STATE_DIR)
 .cowrite/
 state/
+
+# generated
+uv.lock
