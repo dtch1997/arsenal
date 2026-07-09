@@ -99,6 +99,12 @@ def _die(msg: str, code: int = 1) -> None:
     sys.exit(code)
 
 
+def _has_lobby() -> bool:
+    import importlib.util
+
+    return importlib.util.find_spec("lobby") is not None
+
+
 def _port_open(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(0.5)
@@ -127,8 +133,9 @@ def serve(path: str, slug: str | None = None, title: str | None = None,
         draft.parent.mkdir(parents=True, exist_ok=True)
         draft.write_text("", encoding="utf-8")
 
-    if not no_tunnel and not shutil.which("cloudflared"):
-        _die("cloudflared not found on PATH. Install it, or use --no-tunnel for local editing.")
+    if not no_tunnel and not shutil.which("cloudflared") and not _has_lobby():
+        _die("neither the lobby library nor cloudflared found. Install one "
+             "(pip install git+https://github.com/dtch1997/lobby), or use --no-tunnel.")
 
     slug = _slugify(slug) if slug else _slugify(draft.stem)
     sd = state_dir()
@@ -171,7 +178,36 @@ def serve(path: str, slug: str | None = None, title: str | None = None,
             _die(f"server did not come up on port {port}.\n{_tail(srv_log_path)}")
         full_url = url + "/"
     else:
-        # 2) Cloudflare quick tunnel, detached likewise. URL parsed from its log.
+        # Wait until the editor accepts connections (the hub health-checks the port,
+        # and there's no point tunnelling a server that failed to boot).
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            if server.poll() is not None or _port_open(port):
+                break
+            time.sleep(0.25)
+        if server.poll() is not None or not _port_open(port):
+            _kill(server)
+            _die(f"server did not come up on port {port}.\n{_tail(srv_log_path)}")
+
+        # 2a) Preferred: register with the shared lobby hub — one tunnel + one
+        # index page across every editor/dashboard (github.com/dtch1997/lobby).
+        if _has_lobby():
+            import lobby
+
+            try:
+                full_url = lobby.serve(port, name=slug, kind="cowrite", title=title,
+                                       pid=server.pid, cwd=str(draft.parent))
+                url = full_url.rstrip("/")
+            except Exception as e:
+                print(f"cowrite: lobby hub unavailable ({e}); falling back to cloudflared",
+                      file=sys.stderr)
+                if not shutil.which("cloudflared"):
+                    _kill(server)
+                    _die("lobby hub failed and cloudflared not found on PATH.")
+
+    if not no_tunnel and url is None:
+        # 2b) Fallback: per-editor Cloudflare quick tunnel, detached likewise.
+        # URL parsed from its log.
         log = open(log_path, "wb")
         tunnel = subprocess.Popen(
             ["cloudflared", "tunnel", "--no-autoupdate", "--url", f"http://127.0.0.1:{port}"],
@@ -253,6 +289,13 @@ def _teardown(st: dict) -> None:
         sd = state_dir()
         for p in (_state_path(slug), sd / f"{slug}.cloudflared.log", sd / f"{slug}.http.log"):
             p.unlink(missing_ok=True)
+        if _has_lobby():
+            import lobby
+
+            try:
+                lobby.unregister(slug)
+            except Exception:
+                pass  # hub gone or never registered — nothing to clean
 
 
 def prune() -> list[str]:

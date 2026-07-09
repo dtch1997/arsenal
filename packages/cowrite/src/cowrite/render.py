@@ -153,7 +153,7 @@ async function save(baseRev) {
   if (saving || src.value === clean) { return; }
   saving = true; saveBtn.disabled = true; setStatus('saving…');
   try {
-    const r = await fetch('/save', { method: 'POST',
+    const r = await fetch('save', { method: 'POST',
       headers: { 'Content-Type': 'text/plain; charset=utf-8', 'X-Base-Rev': baseRev || rev },
       body: src.value });
     const data = await r.json();
@@ -189,13 +189,13 @@ async function pollDisk() {
   if (pollBusy || saving) { return; }
   pollBusy = true;
   try {
-    const r = await fetch('/api/state');
+    const r = await fetch('api/state');
     const state = await r.json();
     if (pollFails >= 3) { markDirty(); }  // recovered: clear the lost-connection status
     pollFails = 0;
     if (state.rev !== rev) {
       if (src.value === clean) {
-        const doc = await (await fetch('/api/doc')).json();
+        const doc = await (await fetch('api/doc')).json();
         const scroll = src.scrollTop;
         src.value = doc.md; clean = doc.md; rev = doc.rev;
         src.scrollTop = scroll;
@@ -221,7 +221,7 @@ async function revert() {
                (dirty ? '\\n\\nUnsaved changes in the editor will be discarded.' : ''))) { return; }
   saving = true; saveBtn.disabled = true; revertBtn.disabled = true; setStatus('reverting…');
   try {
-    const r = await fetch('/revert', { method: 'POST' });
+    const r = await fetch('revert', { method: 'POST' });
     const data = await r.json();
     if (!r.ok || !data.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
     src.value = data.saved;
