@@ -63,7 +63,11 @@ def _normalize_gate(gate) -> dict:
 class Pool:
     """A handle on one CONCIERGE_HOME. Config kwargs override config.yaml:
     concurrency, daily_usd_cap, interval, permission_mode, claude_bin,
-    claude_extra_args, slack_webhook, pool_cmd."""
+    claude_extra_args, slack_webhook, pool_cmd, env_file.
+
+    env_file pre-seeds every worker's environment from a dotenv file (default:
+    ~/.env if it exists; set to null to disable). Values override inherited
+    os.environ; the concierge-set vars still win last."""
 
     def __init__(self, home=None, **config):
         self.home = Home.locate(home)

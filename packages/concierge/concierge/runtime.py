@@ -34,6 +34,55 @@ from .records import now_iso
 PKG_PARENT = str(Path(__file__).resolve().parent.parent)
 
 
+def _parse_env_file(text: str) -> dict[str, str]:
+    """Parse a simple dotenv file: `KEY=VALUE` lines, tolerating an `export `
+    prefix, surrounding single/double quotes, blank lines and `#` comments.
+    No interpolation; stdlib only."""
+    out: dict[str, str] = {}
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export ") or line.startswith("export\t"):
+            line = line[len("export"):].lstrip()
+        if "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        if not key:
+            continue
+        val = val.strip()
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
+            val = val[1:-1]
+        out[key] = val
+    return out
+
+
+def _env_overrides(cfg: dict) -> dict[str, str]:
+    """Values to layer over os.environ, read from the configured env file.
+
+    Config key `env_file`: absent -> default to `~/.env` if it exists; an
+    explicit `null` -> disabled; a set path that doesn't exist -> a loud daemon
+    warning (not a crash)."""
+    if "env_file" in cfg:
+        env_file = cfg["env_file"]
+        if env_file is None:
+            return {}
+        path = Path(env_file).expanduser()
+        if not path.exists():
+            print(f"[concierge] env_file {path} configured but missing — skipping", flush=True)
+            return {}
+    else:
+        path = Path("~/.env").expanduser()
+        if not path.exists():
+            return {}
+    try:
+        return _parse_env_file(path.read_text())
+    except OSError as e:
+        print(f"[concierge] could not read env_file {path}: {e}", flush=True)
+        return {}
+
+
 @dataclass(frozen=True)
 class WorkerState:
     alive: bool                # OS process exists
@@ -83,8 +132,11 @@ class Worker:
         cmd = [sys.executable, "-m", "concierge.worker", task["id"], str(n)]
         if resume:
             cmd += ["--resume", resume]
-        env = dict(
-            os.environ,
+        # merge order: inherited os.environ, then env-file values override it,
+        # then the three concierge-set vars always win last
+        env = dict(os.environ)
+        env.update(_env_overrides(cfg))
+        env.update(
             CONCIERGE_HOME=str(home.root),
             CONCIERGE_TASK_ID=task["id"],
             PYTHONPATH=PKG_PARENT + os.pathsep + os.environ.get("PYTHONPATH", ""),

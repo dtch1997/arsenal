@@ -18,6 +18,14 @@ Example:
 - GPU/heavy jobs run on ephemeral cloud machines via <your dispatch lib>;
   never hand-provision or SSH by hand.
 
+## Background tasks
+- Run the real long command directly with run_in_background — no
+  nohup/disown/setsid, no trailing `&`. Detaching makes the harness track a
+  launcher that exits instantly, orphaning the job. (A workspace guard hook
+  also blocks these, but don't rely on it.)
+- Wait on a tracked background task; don't ship placeholder results to satisfy
+  a gate while the real work is still computing.
+
 ## Reports
 - Every experiment produces a report.md: finding as the H1, then TL;DR,
   Setup, Result, Reproduce. Include exact commands and seeds.

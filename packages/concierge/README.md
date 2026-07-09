@@ -59,6 +59,26 @@ appended to its system prompt — pool-level conventions (artifact paths,
 tooling norms, report standards) that a fresh workspace clone can't carry.
 See [HOUSE_RULES.example.md](HOUSE_RULES.example.md).
 
+### Workspace safety & env
+
+Every workspace is provisioned with a `PreToolUse(Bash)` guard hook that blocks
+the background-task anti-patterns which silently drop the harness completion
+signal — `nohup`/`disown`/`setsid`/trailing-`&` detaches inside
+`run_in_background` commands, and self-matching `pgrep -f` watcher loops. The
+hook is copied into the workspace's `.claude/` and merged into its
+`.claude/settings.json` (never clobbering a cloned repo's own settings); the
+added files are kept out of worker PRs via `.git/info/exclude` and
+`skip-worktree`.
+
+Set `env_file` (config.yaml or a `Pool(...)` kwarg) to pre-seed every worker's
+environment from a dotenv file — defaults to `~/.env` if it exists, set to
+`null` to disable. Values override inherited `os.environ`; the concierge-set
+vars (`CONCIERGE_HOME`, `CONCIERGE_TASK_ID`, `PYTHONPATH`) always win last. This
+saves every worker from rediscovering API keys with `set -a; . ~/.env`.
+
+When a worker exits, the evaluated gate outcome is stored as structured data on
+the task record: `task["gate_result"] = {"passed", "detail", "checked_at"}`.
+
 Run the reconciler somewhere durable (it's stateless — kill and restart
 freely):
 

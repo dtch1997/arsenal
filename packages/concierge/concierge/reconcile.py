@@ -10,8 +10,9 @@ import subprocess
 import time
 from datetime import datetime
 
-from . import gates, runtime
+from . import gates, provision, runtime
 from .notify import notify
+from .records import now_iso
 
 
 def _minutes_since(ts: str) -> float:
@@ -65,6 +66,7 @@ def _make_workspace(task, ws):
     w = task["workspace"]
     if not w.get("repo"):
         ws.mkdir(parents=True)
+        provision.install_guard_hook(ws)
         return
     subprocess.run(["git", "clone", "--quiet", w["repo"], str(ws)], check=True)
     r = subprocess.run(["git", "-C", str(ws), "checkout", "-q", "-b", w["branch"], w["base"]],
@@ -72,6 +74,7 @@ def _make_workspace(task, ws):
     if r.returncode != 0:
         subprocess.run(["git", "-C", str(ws), "checkout", "-q", "-b", w["branch"],
                         f"origin/{w['base']}"], check=True)
+    provision.install_guard_hook(ws)
 
 
 def _dispatch(home, cfg, task):
@@ -108,6 +111,10 @@ def _refresh_running(home, cfg, task):
 
     # worker exited → the pool decides, never the worker
     verdict = gates.check(task, home.workspace(task["id"]))
+    # persist the evaluated verdict as structured data (not just prose in
+    # status_detail) — set once here so every downstream save path carries it
+    task["gate_result"] = {"passed": bool(verdict), "detail": verdict.detail,
+                           "checked_at": now_iso()}
     if verdict:
         task["links"].update({k: v for k, v in verdict.links.items() if v})
         task["output"] = state.output
@@ -133,7 +140,11 @@ def _refresh_running(home, cfg, task):
                 f"gate failed after {len(task['attempts'])} attempts — {verdict.detail}")
     else:
         _resume(home, cfg, task,
-                f"Your completion gate failed — {verdict.detail}. Fix this so the gate passes, then stop.")
+                f"Your completion gate failed — {verdict.detail}. Fix this so the gate passes, "
+                "then stop. If the gate is failing because results are still computing remotely, "
+                "do NOT ship placeholder results to satisfy it — run the wait as a tracked "
+                "background task (`run_in_background: true`, no nohup/&), finish the real analysis "
+                "when results land, and only then stop.")
 
 
 def _maybe_unblock(home, cfg, task):
