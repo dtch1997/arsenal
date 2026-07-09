@@ -8,7 +8,7 @@
 from .client import ensure_hub, hub_url, serve, serve_dir, unregister
 from .state import LobbyError
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "serve",

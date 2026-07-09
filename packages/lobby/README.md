@@ -60,9 +60,9 @@ lobby prune           # forget apps that are no longer running
   redirects from backends are rewritten back into the mount.
 - Liveness = pid check (when registered) + TCP probe. Dead apps stay on the
   index greyed out as "ended" until you `lobby prune`.
-- The tunnel comes from [marquee](https://github.com/dtch1997/marquee)
-  (`pip install "lobby[tunnel]"`), default provider cloudflare quick tunnels.
-  No marquee / no `cloudflared`? The hub still runs, local-only.
+- The tunnel comes from [marquee](https://github.com/dtch1997/marquee) (a
+  hard dependency, itself stdlib-only), default provider cloudflare quick
+  tunnels. No `cloudflared` binary? The hub still runs, local-only.
 
 The hub URL is stable for the daemon's lifetime — one long-lived quick-tunnel
 URL instead of one per app. (A permanently-stable named tunnel would be a new
@@ -71,7 +71,7 @@ marquee provider; the seam is there.)
 ## Install
 
 ```
-pip install "lobby[tunnel] @ git+https://github.com/dtch1997/lobby"
+pip install "lobby @ git+https://github.com/dtch1997/lobby"
 ```
 
 ## Websockets
