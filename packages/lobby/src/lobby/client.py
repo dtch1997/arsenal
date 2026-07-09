@@ -111,15 +111,16 @@ def serve_dir(
     kind: str = "static",
     title: str | None = None,
     entry: str = "",
+    port: int | None = None,
     hub_port: int | None = None,
     tunnel: bool = True,
 ):
     """Serve a directory of static files through the hub.
 
-    Spawns a detached `python -m http.server` on a free port, registers it, and
-    returns `(url, stop)` where `stop()` kills the file server.
+    Spawns a detached `python -m http.server` (free port unless `port` is given),
+    registers it, and returns `(url, stop)` where `stop()` kills the file server.
     """
-    port = state.free_port()
+    port = port or state.free_port()
     proc = subprocess.Popen(
         [sys.executable, "-m", "http.server", str(port), "--bind", "127.0.0.1",
          "--directory", str(directory)],
