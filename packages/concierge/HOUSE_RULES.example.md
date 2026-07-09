@@ -23,8 +23,15 @@ Example:
   nohup/disown/setsid, no trailing `&`. Detaching makes the harness track a
   launcher that exits instantly, orphaning the job. (A workspace guard hook
   also blocks these, but don't rely on it.)
-- Wait on a tracked background task; don't ship placeholder results to satisfy
-  a gate while the real work is still computing.
+- Never ship placeholder results to satisfy a gate while the real work is still
+  computing.
+- If your deliverable depends on a long-running job running OUTSIDE this worker
+  (a pod pipeline, a training run), do not wait in-session for more than a few
+  minutes — the session output timeout will kill the attempt. Call the
+  `signal_waiting` tool with a cheap shell probe that exits 0 when the job is
+  done (for `rclone lsf` and friends that exit 0 on a missing object, test the
+  OUTPUT is non-empty: `test -n "$(rclone lsf gcs:.../DONE)"`), then stop. The
+  daemon polls it and resumes this same session to finish — no attempt burned.
 
 ## Reports
 - Every experiment produces a report.md: finding as the H1, then TL;DR,

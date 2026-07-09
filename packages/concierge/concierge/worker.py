@@ -30,10 +30,12 @@ from claude_agent_sdk import (
     tool,
 )
 
-from .records import Home, load_config
+from .records import Home, load_config, now_iso
 
 READONLY_TOOLS = ["Read", "Glob", "Grep", "WebSearch", "WebFetch"]
 BLOCKED_TOOL = "mcp__concierge__signal_blocked"
+WAITING_TOOL = "mcp__concierge__signal_waiting"
+WAIT_TIMEOUT_MINUTES = 720
 
 
 def _normalize(message) -> dict | None:
@@ -60,8 +62,11 @@ def _normalize(message) -> dict | None:
 
 
 def _options(home: Home, task: dict, cfg: dict, resume: str | None,
-             output_schema: dict | None) -> ClaudeAgentOptions:
-    mailbox_server = create_sdk_mcp_server(name="concierge", tools=[_blocked_tool(home, task["id"])])
+             output_schema: dict | None, attempt: int) -> ClaudeAgentOptions:
+    mailbox_server = create_sdk_mcp_server(
+        name="concierge",
+        tools=[_blocked_tool(home, task["id"]),
+               _waiting_tool(home, task["id"], cfg, attempt)])
     readonly = task["workspace"].get("access") == "readonly"
     spent = sum(a.get("cost_usd") or 0 for a in task["attempts"])
     remaining = max(0.5, task["budget"]["usd"] - spent)
@@ -78,7 +83,7 @@ def _options(home: Home, task: dict, cfg: dict, resume: str | None,
         cwd=str(home.workspace(task["id"])),
         resume=resume,
         mcp_servers={"concierge": mailbox_server},
-        allowed_tools=(READONLY_TOOLS if readonly else []) + [BLOCKED_TOOL],
+        allowed_tools=(READONLY_TOOLS if readonly else []) + [BLOCKED_TOOL, WAITING_TOOL],
         # readonly: nothing outside the allowlist gets auto-approved, and there
         # is no human to approve — write tools are effectively denied
         permission_mode=None if readonly else cfg.get("permission_mode", "bypassPermissions"),
@@ -101,8 +106,54 @@ def _blocked_tool(home: Home, tid: str):
     return signal_blocked
 
 
+def _waiting_tool(home: Home, tid: str, cfg: dict, attempt: int):
+    default_timeout = cfg.get("wait_timeout_minutes", WAIT_TIMEOUT_MINUTES)
+
+    @tool("signal_waiting",
+          "Park this task on an external long-running job (a pod pipeline, a "
+          "training run, anything computing OUTSIDE this worker) without burning "
+          "a retry. Register a machine-checkable wake condition, then stop; the "
+          "daemon polls it cheaply and resumes THIS session when it fires, so "
+          "you can finish the report/PR. Make the probe self-contained and cheap "
+          "(it runs repeatedly in your workspace). For tools that exit 0 even "
+          "when the object is missing (e.g. `rclone lsf gcs:.../DONE`), test the "
+          "OUTPUT is non-empty, not the exit code: "
+          "`test -n \"$(rclone lsf gcs:.../DONE)\"`.",
+          # explicit schema so timeout_minutes is genuinely optional (the
+          # {name: type} shorthand marks every field required)
+          {"type": "object",
+           "properties": {
+               "until_shell": {"type": "string",
+                               "description": "shell command run in the workspace; exit 0 = condition met"},
+               "note": {"type": "string",
+                        "description": "human-readable description of what is being waited on"},
+               "timeout_minutes": {"type": "number",
+                                   "description": "give up waiting after this long (default from config, 720)"},
+           },
+           "required": ["until_shell", "note"]})
+    async def signal_waiting(args):
+        timeout = args.get("timeout_minutes")
+        sidecar = {
+            "until_shell": str(args["until_shell"]),
+            "note": str(args["note"]),
+            "timeout_minutes": float(timeout) if timeout is not None else default_timeout,
+            "requested_at": now_iso(),
+            "attempt": attempt,
+        }
+        # atomic write (temp + rename), same pattern as Home.save — the daemon
+        # owns the task record, so we only ever touch this sidecar
+        p = home.wait_path(tid)
+        tmp = p.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(sidecar, indent=2))
+        os.replace(tmp, p)
+        return {"content": [{"type": "text",
+                             "text": "Wait registered. Stop now; you will be "
+                                     "resumed when the condition fires."}]}
+    return signal_waiting
+
+
 async def run(home: Home, task: dict, prompt: str, out, resume: str | None,
-              output_schema: dict | None = None) -> int:
+              output_schema: dict | None = None, attempt: int = 1) -> int:
     def emit(ev):
         out.write(json.dumps(ev, default=str) + "\n")
         out.flush()
@@ -118,7 +169,7 @@ async def run(home: Home, task: dict, prompt: str, out, resume: str | None,
 
     async def consume():
         async for message in query(prompt=prompt,
-                                   options=_options(home, task, load_config(home), resume, output_schema)):
+                                   options=_options(home, task, load_config(home), resume, output_schema, attempt)):
             ev = _normalize(message)
             if ev:
                 emit(ev)
@@ -159,7 +210,7 @@ def main():
     schema_path = log_dir / "output_schema.json"  # written by Worker.spawn when the attempt has one
     schema = json.loads(schema_path.read_text()) if schema_path.exists() else None
     with (log_dir / "agent.jsonl").open("a") as out:
-        raise SystemExit(asyncio.run(run(home, task, prompt, out, args.resume, schema)))
+        raise SystemExit(asyncio.run(run(home, task, prompt, out, args.resume, schema, args.attempt)))
 
 
 if __name__ == "__main__":

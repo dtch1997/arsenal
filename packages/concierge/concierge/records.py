@@ -11,7 +11,7 @@ import secrets
 import time
 from pathlib import Path
 
-ACTIVE = ("queued", "running", "blocked")
+ACTIVE = ("queued", "running", "blocked", "waiting")
 TERMINAL = ("done", "failed", "cancelled")
 
 
@@ -84,6 +84,9 @@ class Home:
     def spec_path(self, tid) -> Path:
         return self.root / "specs" / f"{tid}.md"
 
+    def wait_path(self, tid) -> Path:
+        return self.root / "tasks" / f"{tid}.wait.json"
+
 
 def load_config(home: "Home") -> dict:
     p = home.root / "config.yaml"
@@ -113,6 +116,7 @@ def new_task(tid, title, gate, budget, workspace, priority=0, notify=None,
         "status_detail": "",
         "gate_result": None,
         "attempts": [],
+        "gate_failures": 0,
         "max_attempts": max_attempts,
         "mail_delivered": 0,
         "notify": notify or ["stdout"],

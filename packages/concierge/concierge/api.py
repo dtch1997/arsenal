@@ -63,11 +63,17 @@ def _normalize_gate(gate) -> dict:
 class Pool:
     """A handle on one CONCIERGE_HOME. Config kwargs override config.yaml:
     concurrency, daily_usd_cap, interval, permission_mode, claude_bin,
-    claude_extra_args, slack_webhook, pool_cmd, env_file.
+    claude_extra_args, slack_webhook, pool_cmd, env_file, wait_poll_seconds,
+    wait_timeout_minutes.
 
     env_file pre-seeds every worker's environment from a dotenv file (default:
     ~/.env if it exists; set to null to disable). Values override inherited
-    os.environ; the concierge-set vars still win last."""
+    os.environ; the concierge-set vars still win last.
+
+    wait_poll_seconds (default 60) is how often the reconciler evaluates a
+    `waiting` task's wake probe; wait_timeout_minutes (default 720) is the
+    fallback deadline a worker's signal_waiting inherits when it omits its own
+    timeout. A `waiting` task holds no worker slot and burns no attempt."""
 
     def __init__(self, home=None, **config):
         self.home = Home.locate(home)

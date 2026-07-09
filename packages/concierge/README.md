@@ -79,6 +79,31 @@ saves every worker from rediscovering API keys with `set -a; . ~/.env`.
 When a worker exits, the evaluated gate outcome is stored as structured data on
 the task record: `task["gate_result"] = {"passed", "detail", "checked_at"}`.
 
+### Worker lifecycle & the `waiting` state
+
+A task moves `queued → running → done`, with three ways to hand control back
+without failing:
+
+- **`blocked`** — the worker called `signal_blocked` with a question; a user
+  message resumes it.
+- **`waiting`** — the worker called `signal_waiting`: its real work is a
+  long-running job *outside* the worker (a bellhop pod pipeline, a training
+  run). Rather than ship a placeholder or wait in-session (both of which the
+  SDK's output timeout kills), the worker declares a cheap shell probe
+  (`until_shell`, exit 0 = done) plus a human `note`, writes an atomic sidecar
+  `tasks/<id>.wait.json`, and stops. The daemon polls the probe in the
+  workspace and resumes the *same* session when it fires or times out.
+- **gate fail** — the worker exited but the gate is unmet; it resumes with
+  feedback.
+
+Only gate-checked failures count toward `max_attempts` (tracked on
+`task["gate_failures"]`); resuming from `blocked` or `waiting` never burns a
+strike. Two config keys tune waiting: **`wait_poll_seconds`** (default 60) —
+how often the reconciler evaluates a waiting task's probe — and
+**`wait_timeout_minutes`** (default 720) — the fallback deadline a
+`signal_waiting` call inherits when it omits its own `timeout_minutes`. A
+`waiting` task holds no worker slot, so it doesn't count against `concurrency`.
+
 Run the reconciler somewhere durable (it's stateless — kill and restart
 freely):
 

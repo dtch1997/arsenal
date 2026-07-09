@@ -6,6 +6,7 @@ re-attached via pid + log paths recorded in the task record.
 """
 from __future__ import annotations
 
+import json
 import subprocess
 import time
 from datetime import datetime
@@ -27,7 +28,12 @@ Work in the current directory (your dedicated workspace).
 Your completion gate, checked externally after you exit: {gate_desc}.
 If and only if you cannot proceed without human input, call the
 `signal_blocked` tool with your question, then stop; you will be resumed
-with the answer. Otherwise, complete the task so the gate passes, then stop.
+with the answer. If your deliverable depends on an external long-running job
+(pod pipeline, training run), do not wait in-session for more than a few
+minutes and never ship placeholder results: call the `signal_waiting` tool
+with a cheap shell probe that exits 0 when the job is done, then stop; you
+will be resumed to finish when it fires. Otherwise, complete the task so the
+gate passes, then stop.
 
 --- TASK SPEC ---
 """
@@ -81,6 +87,9 @@ def _dispatch(home, cfg, task):
     ws = home.workspace(task["id"])
     if not ws.exists():
         _make_workspace(task, ws)
+    # a stale wait sidecar from a prior attempt must never be honored against a
+    # fresh attempt 1 (attempt-number match is the guard, but clean up anyway)
+    home.wait_path(task["id"]).unlink(missing_ok=True)
     spec = home.spec_path(task["id"]).read_text()
     prompt = _preamble(task) + spec
     task["mail_delivered"] = len(home.messages(task["id"]))
@@ -109,6 +118,26 @@ def _refresh_running(home, cfg, task):
     if state.lingering:
         worker.kill()  # session over (event stream is authoritative), process didn't exit
 
+    # the worker may have parked on an external job via signal_waiting: honor a
+    # sidecar written by the CURRENT attempt BEFORE the gate check, so waiting
+    # burns no attempt and writes no gate_result. Stale sidecars (from an older
+    # attempt) are deleted, not honored.
+    wait_p = home.wait_path(task["id"])
+    if wait_p.exists():
+        try:
+            sidecar = json.loads(wait_p.read_text())
+        except (OSError, ValueError):
+            sidecar = None
+        wait_p.unlink(missing_ok=True)
+        latest = task["attempts"][-1]["n"] if task["attempts"] else 0
+        if sidecar and sidecar.get("attempt") == latest:
+            task["wait"] = {**sidecar, "since": now_iso(), "last_polled": None}
+            task["status"] = "waiting"
+            task["status_detail"] = f"waiting: {sidecar['note']}"
+            home.save(task)
+            notify(cfg, task, "waiting", sidecar["note"])
+            return
+
     # worker exited → the pool decides, never the worker
     verdict = gates.check(task, home.workspace(task["id"]))
     # persist the evaluated verdict as structured data (not just prose in
@@ -132,25 +161,83 @@ def _refresh_running(home, cfg, task):
         notify(cfg, task, "blocked", question)
         return
 
+    # a gate-checked failure is what burns a strike — NOT a resume from
+    # blocked/waiting, which leave attempts as pure history. Count gate
+    # failures on their own counter (backwards compat: default 0).
+    task["gate_failures"] = task.get("gate_failures", 0) + 1
     total_cost = sum(a.get("cost_usd") or 0 for a in task["attempts"])
     if total_cost >= task["budget"]["usd"]:
         _finish(home, cfg, task, "failed", f"usd budget exceeded (${total_cost:.2f} >= ${task['budget']['usd']})")
-    elif len(task["attempts"]) >= task["max_attempts"]:
+    elif task["gate_failures"] >= task["max_attempts"]:
         _finish(home, cfg, task, "failed",
-                f"gate failed after {len(task['attempts'])} attempts — {verdict.detail}")
+                f"gate failed after {task['gate_failures']} gate-checked attempts — {verdict.detail}")
     else:
         _resume(home, cfg, task,
                 f"Your completion gate failed — {verdict.detail}. Fix this so the gate passes, "
-                "then stop. If the gate is failing because results are still computing remotely, "
-                "do NOT ship placeholder results to satisfy it — run the wait as a tracked "
-                "background task (`run_in_background: true`, no nohup/&), finish the real analysis "
-                "when results land, and only then stop.")
+                "then stop. If the gate is failing because results are still computing remotely "
+                "(a pod pipeline, training run, or other external long-running job), do NOT ship "
+                "placeholder results to satisfy it and do NOT wait in-session — call the "
+                "`signal_waiting` tool with a cheap shell probe that exits 0 once the job is done, "
+                "then stop; you will be resumed to finish when it fires.")
 
 
 def _maybe_unblock(home, cfg, task):
     msgs = home.messages(task["id"])
     if any(m["from"] == "user" for m in msgs[task["mail_delivered"]:]):
         _resume(home, cfg, task, "The user replied to your question.")
+
+
+def _archive_wait(task):
+    """Move the live wait onto wait_history and clear it (caller resumes/saves)."""
+    wait = task.pop("wait", None)
+    if wait is not None:
+        task.setdefault("wait_history", []).append({**wait, "resolved_at": now_iso()})
+
+
+def _maybe_wake(home, cfg, task):
+    """Poll a waiting task's wake condition; resume the same session when it
+    fires, times out, or the user speaks. Waiting burns no attempt."""
+    wait = task["wait"]
+    note = wait["note"]
+
+    # a user message wakes a waiting task immediately, same as _maybe_unblock —
+    # regardless of the probe
+    msgs = home.messages(task["id"])
+    if any(m["from"] == "user" for m in msgs[task["mail_delivered"]:]):
+        _archive_wait(task)
+        _resume(home, cfg, task, "The user replied while you were waiting.")
+        return
+
+    # give up after timeout_minutes — a normal attempt resumes to finish honestly
+    if _minutes_since(wait["since"]) > wait["timeout_minutes"]:
+        _archive_wait(task)
+        _resume(home, cfg, task,
+                f"Your wait timed out after {wait['timeout_minutes']:.0f} minutes "
+                f"(waiting on: {note}). Investigate the external job — if it failed, "
+                "say so honestly in your report and finish however the gate allows; "
+                "do not restart a multi-hour pipeline without checking budget.")
+        return
+
+    # poll throttle: only run the probe every wait_poll_seconds
+    poll_seconds = cfg.get("wait_poll_seconds", 60)
+    last = wait.get("last_polled")
+    if last is not None and (datetime.now() - datetime.strptime(last, "%Y-%m-%dT%H:%M:%S")).total_seconds() < poll_seconds:
+        return
+    wait["last_polled"] = now_iso()
+    home.save(task)
+
+    try:
+        r = subprocess.run(wait["until_shell"], shell=True, cwd=home.workspace(task["id"]),
+                           capture_output=True, text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        return  # probe hung this round; try again next poll
+    if r.returncode == 0:
+        tail = (r.stdout + r.stderr).strip()[-500:]
+        _archive_wait(task)
+        _resume(home, cfg, task,
+                f"Your wait condition fired ({note}): the probe succeeded"
+                f"{f' — {tail}' if tail else ''}. Finish the task now so the gate "
+                "passes, then stop.")
 
 
 def _spent_today(tasks) -> float:
@@ -167,7 +254,10 @@ def tick(home, cfg):
             _refresh_running(home, cfg, task)
         elif task["status"] == "blocked":
             _maybe_unblock(home, cfg, task)
+        elif task["status"] == "waiting":
+            _maybe_wake(home, cfg, task)
 
+    # waiting tasks are parked on external work — they hold no worker slot
     active = sum(1 for t in tasks if t["status"] == "running")
     cap = cfg.get("daily_usd_cap", 50)
     queued = sorted((t for t in tasks if t["status"] == "queued"),

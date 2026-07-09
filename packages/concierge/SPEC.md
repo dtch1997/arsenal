@@ -176,22 +176,40 @@ Each tick (a few seconds), scan `tasks/` and reconcile:
 |---|---|
 | `queued`, free slot | create worktree, spawn `AgentRun`, → `running` |
 | `running`, process exited, gate **passes** | → `done`, stamp links, notify |
+| `running`, exited, worker called `signal_waiting` (current-attempt sidecar) | consume sidecar, → `waiting` (no gate check, no strike), notify |
 | `running`, exited, gate fails, unanswered worker message | → `blocked`, notify |
-| `running`, exited, gate fails, attempts < max | resume session with gate feedback (new attempt) |
-| `running`, exited, gate fails, attempts ≥ max | → `failed`, notify |
+| `running`, exited, gate fails, gate_failures < max | resume session with gate feedback (new attempt) |
+| `running`, exited, gate fails, gate_failures ≥ max | → `failed`, notify |
 | `running`, budget (usd/wall) exceeded | kill, → `failed(budget)`, notify |
 | `blocked`, new user message | resume with message, → `running` |
+| `waiting`, wake probe exits 0 (throttled to `wait_poll_seconds`) | resume same session to finish, → `running` |
+| `waiting`, elapsed > `timeout_minutes` | resume with a timeout note (normal attempt), → `running` |
+| `waiting`, new user message | resume with message, → `running` |
+
+`waiting` (issue #2) lets a worker park on a multi-hour job running *outside*
+the worker (a pod-side pipeline) without shipping a placeholder or burning a
+retry. The worker calls the `signal_waiting` tool with a cheap shell probe
+(`until_shell`, exit 0 = done) and a human-readable `note`; it writes an atomic
+sidecar `tasks/<id>.wait.json` (the daemon owns the record, so the worker never
+mutates it) and stops. The reconciler polls the probe in the workspace at
+`wait_poll_seconds` and resumes the *same* session when it fires or times out.
+Strikes are counted on `gate_failures` (gate-checked attempts only), so
+resuming from `blocked`/`waiting` never consumes an attempt; the `attempts`
+list stays full history.
 
 State machine:
 
 ```
-queued ──▶ running ──▶ done
-              │ ▲          
-              ▼ │ (user msg)
-           blocked
-              │
+                  ┌──── (user msg) ────┐
+                  ▼                     │
+queued ──▶ running ──▶ done          blocked
+              │  ▲                      ▲
+              │  └─ (probe/timeout/msg) │ (gate fail + worker question)
+              │  └──── waiting ◀─(signal_waiting)
               ▼ (strikes / budget / cancel)
            failed
+
+blocked and waiting resume back into running; neither burns a strike.
 ```
 
 Concurrency cap (default ~4) is the only scheduling sophistication in v1.

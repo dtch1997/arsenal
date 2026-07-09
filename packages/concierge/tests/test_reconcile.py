@@ -79,4 +79,7 @@ def test_fail_resume_message_discourages_placeholders(tmp_path, monkeypatch):
     reconcile._refresh_running(home, {}, task)
 
     assert "do NOT ship placeholder" in capture["text"]
-    assert "run_in_background" in capture["text"]
+    # issue #2: the fail-resume must point at signal_waiting, NOT at an
+    # in-session tracked wait (the SDK killed that in instance 2)
+    assert "signal_waiting" in capture["text"]
+    assert "run_in_background" not in capture["text"]
