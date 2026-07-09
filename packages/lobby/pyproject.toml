@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Daniel Tan" }]
-dependencies = ["marquee @ git+https://github.com/dtch1997/marquee"]
+dependencies = ["marquee-serve @ git+https://github.com/dtch1997/marquee"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
