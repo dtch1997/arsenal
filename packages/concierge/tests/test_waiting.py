@@ -326,3 +326,14 @@ def test_ask_refuses_waiting_task(tmp_path):
     with pytest.raises(api.TaskFailed):
         import asyncio
         asyncio.run(pool.ask("t-x", "status?"))
+
+
+def test_wait_sidecar_does_not_break_task_listing(tmp_path):
+    # regression: <tid>.wait.json matches a bare t-*.json glob; Home.tasks()
+    # must skip sidecars instead of KeyError'ing on the missing 'created'.
+    home, task = _home_task(tmp_path)
+    home.wait_path("t-x").write_text(json.dumps(
+        {"until_shell": "true", "note": "", "attempt": 1,
+         "requested_at": now_iso(), "timeout_minutes": 60}))
+    listed = home.tasks()
+    assert [t["id"] for t in listed] == ["t-x"]

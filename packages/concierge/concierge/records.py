@@ -51,8 +51,12 @@ class Home:
         os.replace(tmp, p)
 
     def tasks(self) -> list[dict]:
+        # NB: wait-probe sidecars (<tid>.wait.json) live in the same dir and
+        # match a bare t-*.json glob — they are not task records; skip them.
         return sorted(
-            (json.loads(p.read_text()) for p in (self.root / "tasks").glob("t-*.json")),
+            (json.loads(p.read_text())
+             for p in (self.root / "tasks").glob("t-*.json")
+             if not p.name.endswith(".wait.json")),
             key=lambda t: t["created"],
         )
 
