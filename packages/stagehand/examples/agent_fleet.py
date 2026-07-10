@@ -1,5 +1,5 @@
 """A fleet of coding agents as steps — with a *fake* backend so it runs anywhere
-(no real `claude -p`). In real use, drop the fake and pass `flightdeck_backend()`
+(no real `claude -p`). In real use, drop the fake and use the default backend
 (or rely on the default `subprocess_backend`).
 
     agent(flow, ...)          -- one coding agent as a step -> AgentOutcome
@@ -18,7 +18,7 @@ from stagehand import (Flow, best_of, with_retry, agent, AgentOutcome,
                        AgentSpec, live_dashboard)
 
 
-# --- a fake backend standing in for `claude -p` (swap for flightdeck_backend()) --- #
+# --- a fake backend standing in for `claude -p` (swap for a real backend) --- #
 async def fake_backend(spec: AgentSpec) -> AgentOutcome:
     await asyncio.sleep(0.03)
     q = round(random.Random(spec.prompt).uniform(0, 1), 2)

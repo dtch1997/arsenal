@@ -9,10 +9,8 @@ The work is done by a **backend** (an async `spec -> AgentOutcome`), behind a
 seam so the core stays dependency-free:
 
   - `subprocess_backend` (default) — a zero-dep `claude -p --output-format json`
-    runner; works standalone.
-  - `flightdeck_backend()` — recommended: runs each agent as a flightdeck
-    `AgentRun` (live stream-json capture → the dashboard, cost/tokens/resume).
-    `flightdeck` is imported lazily, so it's an optional integration, not a dep.
+    runner; works standalone. Any `async (AgentSpec) -> AgentOutcome` callable
+    plugs in as a custom backend (`set_default_backend`).
 
 Parallel agents that edit files must not clobber each other — pass
 `isolation="worktree"` to run each in its own throwaway git worktree and capture
@@ -65,7 +63,7 @@ class AgentSpec:
 # ---- backends ------------------------------------------------------------- #
 async def subprocess_backend(spec: AgentSpec) -> AgentOutcome:
     """Zero-dep backend: `claude -p <prompt> --output-format json`. No live
-    streaming (use `flightdeck_backend` for that), but standalone and testable."""
+    streaming, but standalone and testable."""
     argv = ["claude", "-p", spec.prompt, "--output-format", "json",
             "--allowed-tools", ",".join(spec.allowed_tools),
             "--permission-mode", spec.permission_mode]
@@ -100,37 +98,12 @@ async def subprocess_backend(spec: AgentSpec) -> AgentOutcome:
         name=spec.name, raw=data or text)
 
 
-def flightdeck_backend(**run_opts):
-    """Recommended backend: run each agent as a flightdeck `AgentRun`, streaming
-    its live state (status / last action / tokens / cost) to the step's monitor —
-    so the fleet lights up the dashboard. `flightdeck` is imported lazily; pass
-    extra `AgentRun` kwargs (e.g. `done_when=`, `alert=`) via `run_opts`."""
-    async def backend(spec: AgentSpec) -> AgentOutcome:
-        from flightdeck import AgentRun        # lazy: optional integration
-        mon = current_monitor()
-
-        def on_state(s):
-            if mon is not None:
-                mon.set(status=s.status, last_action=s.last_action,
-                        turns=s.turns, tokens=s.tokens, cost=s.cost)
-
-        res = await AgentRun(
-            spec.prompt, name=spec.name, cwd=spec.cwd,
-            allowed_tools=spec.allowed_tools, permission_mode=spec.permission_mode,
-            model=spec.model, timeout=spec.timeout, on_state=on_state,
-            **run_opts).go()
-        return AgentOutcome(
-            ok=res.ok, summary=(res.state.result or ""), cost=res.cost,
-            tokens=res.tokens, session_id=res.session_id, name=res.name, raw=res)
-    return backend
-
-
 _default_backend = subprocess_backend
 
 
 def set_default_backend(backend):
-    """Set the backend used by `agent()` when none is passed (e.g. once at startup
-    to `flightdeck_backend()`)."""
+    """Set the backend used by `agent()` when none is passed (e.g. once at
+    startup, to a custom monitoring backend)."""
     global _default_backend
     _default_backend = backend
 
@@ -174,7 +147,7 @@ def agent(flow, prompt, *inputs, name=None, tools=DEFAULT_TOOLS, isolation=None,
 
     `isolation="worktree"` runs the agent in its own git worktree and captures the
     diff (use it whenever agents run in parallel and edit files). `backend`
-    defaults to `subprocess_backend`; pass `flightdeck_backend()` for live
+    defaults to `subprocess_backend`; pass a custom backend for live
     monitoring. For best-of-N / retry-with-feedback agents, wrap a step fn in
     `best_of` / `with_retry` and declare it with `flow.map` / `flow.spawn`.
     """

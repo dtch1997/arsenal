@@ -10,17 +10,17 @@ which run/task produced it (`produced_by`); lineage is just that DAG.
 Bytes live behind a **backend seam** so the core stays dependency-free:
 
   - `local_backend(root)` — a zero-dep content-addressed store on the local FS.
-  - `cloudfs_backend(...)` — recommended: a content-addressed GCS store (`cloudfs`,
+  - `ferry_backend(...)` — recommended: a content-addressed GCS store (`ferry.cas`,
     imported lazily). This is the default when you don't pass a backend, so a
     plain `ArtifactStore()` persists to GCS; importing stagehand never needs
-    `cloudfs`.
+    `ferry`.
 
 Directories (LoRA adapters, checkpoints) are tarred *deterministically* before
 hashing, so a directory is content-addressed exactly like a file. Secrets store
 only a reference to an env var — the value is never uploaded, but the secret still
 shows up in the lineage graph.
 
-    store = ArtifactStore()                                # cloudfs-backed
+    store = ArtifactStore()                                # ferry.cas-backed
     ds  = store.put("data/train.jsonl", name="train-data")
     key = store.secret("OPENAI_API_KEY")
     # inside a flow step (produced_by is stamped automatically):
@@ -42,7 +42,7 @@ from pathlib import Path
 from .engine import current_monitor
 from .manifest import git_stamp
 
-_CHUNK = 1 << 20   # 1 MiB streaming, matches cloudfs
+_CHUNK = 1 << 20   # 1 MiB streaming, matches ferry.cas
 
 
 # --- the artifact ---------------------------------------------------------- #
@@ -99,22 +99,24 @@ def local_backend(root):
     return _Local()
 
 
-def cloudfs_backend(bucket=None, prefix="daniel/jarvis/artifacts", **client_kw):
-    """Recommended backend: a content-addressed GCS store via `cloudfs`.
+def ferry_backend(bucket=None, prefix="daniel/jarvis/artifacts", **client_kw):
+    """Recommended backend: a content-addressed GCS store via `ferry.cas`
+    (which absorbed the retired `cloudfs` library).
 
-    `cloudfs` is imported lazily on first use, so constructing this (and importing
-    stagehand) never requires it — it's an optional integration, not a dep. The
-    default `prefix` keeps artifacts under their own GCS namespace rather than
-    cloudfs's default blob prefix."""
+    `ferry` is imported lazily on first use, so constructing this (and importing
+    stagehand) never requires it — it's an optional integration, not a dep
+    (install with `pip install "ferry-sync[gcs]"`). The default `prefix` keeps
+    artifacts under their own GCS namespace rather than ferry.cas's default
+    blob prefix."""
     state = {"c": None}
 
     def client():
         if state["c"] is None:
-            from cloudfs import Client          # lazy: optional integration
+            from ferry.cas import Client        # lazy: optional integration
             state["c"] = Client(bucket=bucket, prefix=prefix, **client_kw)
         return state["c"]
 
-    class _Cloudfs:
+    class _Ferry:
         def put_file(self, path) -> str:
             return client().upload(str(path))
 
@@ -129,21 +131,23 @@ def cloudfs_backend(bucket=None, prefix="daniel/jarvis/artifacts", **client_kw):
         def uri(self, fid) -> str | None:
             return client().uri(fid)
 
-    return _Cloudfs()
+    return _Ferry()
 
+
+cloudfs_backend = ferry_backend  # back-compat alias (cloudfs merged into ferry)
 
 _default_backend = None
 
 
 def set_default_artifact_backend(backend):
     """Set the backend an `ArtifactStore()` uses when none is passed (e.g. once at
-    startup to a configured `cloudfs_backend(...)`)."""
+    startup to a configured `ferry_backend(...)`)."""
     global _default_backend
     _default_backend = backend
 
 
 def _resolve_default():
-    return _default_backend if _default_backend is not None else cloudfs_backend()
+    return _default_backend if _default_backend is not None else ferry_backend()
 
 
 # --- the store ------------------------------------------------------------- #

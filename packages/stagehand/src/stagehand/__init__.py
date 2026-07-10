@@ -14,7 +14,7 @@ experiment runs.
               early on a criterion.
   agents    — coding-agent instances as steps: `agent(flow, prompt, …)` ->
               AgentOutcome, behind a backend seam (zero-dep `subprocess_backend`,
-              or the recommended lazy `flightdeck_backend()`); composes with
+              or any custom async backend); composes with
               best_of/with_retry.
   checks    — reusable correctness predicates (`produced`/`finite`/`exit_ok`/
               `tests_pass`/`valid_image`/…) returning a composable `(ok, issues)`
@@ -24,7 +24,7 @@ experiment runs.
   artifacts — content-addressed inputs/outputs with lineage: `ArtifactStore`
               persists files/dirs/secrets by content hash (records `inputs` +
               `produced_by`), behind a backend seam (zero-dep `local_backend`, or
-              the default lazy `cloudfs_backend()`).
+              the default lazy `ferry_backend()`).
   serve     — put status.html behind a public tunnel; a thin lazy re-export of the
               standalone `marquee` library (providers: cloudflared / localhost.run /
               ngrok), imported only when called so the core stays dependency-free.
@@ -43,9 +43,10 @@ from .dashboard import render_dashboard, default_note, COLORS
 from .engine import (Flow, Handle, Task, RunState, FlowCheckError,
                      best_of, with_retry, current_monitor)
 from .agents import (agent, AgentOutcome, AgentSpec, subprocess_backend,
-                     flightdeck_backend, set_default_backend, DEFAULT_TOOLS)
+                     set_default_backend, DEFAULT_TOOLS)
 from .live import live_dashboard
-from .artifacts import (Artifact, ArtifactStore, local_backend, cloudfs_backend,
+from .artifacts import (Artifact, ArtifactStore, local_backend, ferry_backend,
+                        cloudfs_backend,
                         set_default_artifact_backend)
 from .manifest import capture, write_manifest, git_info, git_stamp
 from .memo import Memo, fn_fingerprint, memo_key
@@ -59,9 +60,9 @@ __all__ = [
     "Flow", "Handle", "Task", "RunState", "FlowCheckError", "best_of", "with_retry",
     "current_monitor",
     "agent", "AgentOutcome", "AgentSpec", "subprocess_backend",
-    "flightdeck_backend", "set_default_backend", "DEFAULT_TOOLS",
+    "set_default_backend", "DEFAULT_TOOLS",
     "live_dashboard",
-    "Artifact", "ArtifactStore", "local_backend", "cloudfs_backend",
+    "Artifact", "ArtifactStore", "local_backend", "ferry_backend", "cloudfs_backend",
     "set_default_artifact_backend",
     "capture", "write_manifest", "git_info", "git_stamp",
     "Memo", "fn_fingerprint", "memo_key",

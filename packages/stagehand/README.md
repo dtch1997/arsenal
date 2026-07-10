@@ -19,9 +19,9 @@ fleet of coding agents, a data pipeline, or an eval harness. The core is pure st
 | `monitor`   | a file-backed `running/done/failed` + `done/total` ticker per unit of work; units link via `parent` into a tree |
 | `dashboard` | render that tree into one auto-refreshing HTML status page |
 | `engine`    | the **DAG engine**: declare with `Flow.map`/`filter`/`reduce`/`expand`/`add`/`spawn` (+ `best_of`/`with_retry` policies), `await flow.run(stop_when=…)`; streams between steps, fans out, exits early |
-| `agents`    | **coding agents as steps**: `agent(flow, prompt, …)` → `AgentOutcome`, behind a backend seam (zero-dep `subprocess_backend`, or the recommended lazy `flightdeck_backend()`) |
+| `agents`    | **coding agents as steps**: `agent(flow, prompt, …)` → `AgentOutcome`, behind a backend seam (zero-dep `subprocess_backend`, or any custom async backend) |
 | `live`      | `live_dashboard` — poll a running flow's monitor tree and re-render one auto-refreshing HTML status page |
-| `artifacts` | **content-addressed inputs/outputs with lineage**: `ArtifactStore` persists files/dirs/secrets by content hash and tracks `inputs` + `produced_by`, behind a backend seam (zero-dep `local_backend`, or the default lazy `cloudfs_backend()`) |
+| `artifacts` | **content-addressed inputs/outputs with lineage**: `ArtifactStore` persists files/dirs/secrets by content hash and tracks `inputs` + `produced_by`, behind a backend seam (zero-dep `local_backend`, or the default lazy `ferry_backend()`) |
 | `serve`     | put `status.html` behind a public URL for a live link — a lazy wrapper over the shared [`lobby`](https://github.com/dtch1997/lobby) hub: one tunnel + one index page across all runs |
 | `manifest`  | **automatic provenance**: every `flow.run()` writes `runs_dir/manifest.json` (git sha/dirty/branch, argv, config, …) and every `store.put()` stamps `meta["git"]` — results always answer *"which code produced this?"* |
 | `memo`      | **content-keyed step memoization**: `Flow(memo=…)` persists every successful result keyed on fn source + input values — identical re-runs are free (crashed sweeps resume), changed steps re-run, `run(refresh=True)` deliberately resamples |
@@ -115,9 +115,7 @@ returns a structured `AgentOutcome` — so it composes with everything: `best_of
 best-of-N agents, `with_retry` for retry-with-feedback, `reduce` to merge.
 
 ```python
-from stagehand import Flow, best_of, agent, flightdeck_backend, set_default_backend
-
-set_default_backend(flightdeck_backend())        # live monitoring (optional; see below)
+from stagehand import Flow, best_of, agent
 
 flow  = Flow("runs", concurrency=4)
 patch = agent(flow, "fix the failing test in foo.py", isolation="worktree")
@@ -130,7 +128,7 @@ print(patch.result.diff)
 - `isolation="worktree"` — run the agent in its own throwaway git worktree and capture the diff. Use it whenever agents run in parallel and edit files.
 - **Backends** (the seam — the core stays dependency-free):
   - `subprocess_backend` (default) — zero-dep `claude -p --output-format json`.
-  - `flightdeck_backend()` (recommended) — runs each agent as a [flightdeck](https://github.com/dtch1997/flightdeck) `AgentRun` with live stream-json capture to the dashboard (status / action / tokens / cost / resume). `flightdeck` is imported lazily — an optional integration, not a dependency.
+  - Any `async (AgentSpec) -> AgentOutcome` callable plugs in as a custom backend (per-call `backend=` or global `set_default_backend`), e.g. for richer monitoring.
 
 Any step can stream its own live progress to the dashboard with `current_monitor().set(…)`.
 
@@ -234,7 +232,7 @@ DAG you can serialize and re-resolve later.
 ```python
 from stagehand import ArtifactStore
 
-store = ArtifactStore()                                   # cloudfs-backed by default
+store = ArtifactStore()                                   # ferry.cas-backed by default
 ds  = store.put("data/train.jsonl", name="train-data")   # local → uploaded + registered
 cfg = store.put("configs/run.yaml", name="config")
 key = store.secret("OPENAI_API_KEY")                      # ref-only; value never uploaded
@@ -254,9 +252,9 @@ store.save("artifacts.lock.json")     # commit this pointer — re-resolves the 
 Directories (LoRA adapters, checkpoints) are tarred **deterministically** before
 hashing, so a dir is content-addressed exactly like a file. Storage lives behind a
 backend seam: `local_backend(root)` is a zero-dep content-addressed store on local
-disk (used in tests); `cloudfs_backend(…)` is the default and persists to GCS via
-[`cloudfs`](https://github.com/dtch1997/cloudfs) (imported lazily, so the core
-stays dependency-free). Pass `registry_path=flow.runs_dir / "artifacts.json"` to
+disk (used in tests); `ferry_backend(…)` is the default and persists to GCS via
+[`ferry.cas`](https://github.com/dtch1997/ferry) (imported lazily, so the core
+stays dependency-free; `cloudfs_backend` remains as a back-compat alias). Pass `registry_path=flow.runs_dir / "artifacts.json"` to
 mirror the registry alongside the run as it goes; `save()` writes the same shape to
 a git-committable lock-file.
 

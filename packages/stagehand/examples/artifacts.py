@@ -1,6 +1,6 @@
 """A worked artifacts example — the lifecycle of inputs/outputs with lineage, with
 the compute faked out so it runs anywhere in a second. Backed by `local_backend`
-so it needs no GCS; swap in `cloudfs_backend()` for real remote storage.
+so it needs no GCS; swap in `ferry_backend()` for real remote storage.
 
     data ─┐
     config┼─> train ──> (lora adapter) ──> eval ──> (eval results)
@@ -50,7 +50,7 @@ async def main():
     runs = _fresh(Path("runs-artifacts"))
     work = _fresh(runs / "work")
 
-    # local_backend keeps this hermetic; ArtifactStore() alone is cloudfs-backed.
+    # local_backend keeps this hermetic; ArtifactStore() alone is ferry.cas-backed.
     store = ArtifactStore(backend=local_backend(runs / "blobs"),
                           cache_dir=runs / "cache",
                           registry_path=runs / "artifacts.json")   # mirrored live
