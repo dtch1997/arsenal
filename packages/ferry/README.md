@@ -90,3 +90,28 @@ ferry remotes
 - Not a new transfer engine — that's rclone's job.
 - Not content-addressed storage — see `cloudfs` for MD5-keyed blob storage.
 - Not a daemon / continuous watcher — it's one-shot `push`/`pull` you call.
+
+## Content-addressed store — `ferry.cas`
+
+Absorbed from the retired [cloudfs](https://github.com/ArcadiaImpact/cloudfs)
+library: a minimal content-addressed file store on GCS. Files are keyed by
+the MD5 of their content — uploads are idempotent, identical content is
+stored once. Needs the extra: `pip install "ferry-sync[gcs]"` (auth via
+Application Default Credentials, unlike the rclone half).
+
+```python
+from ferry import cas
+
+file_id = cas.upload("model.safetensors")   # -> md5 hex id
+cas.download(file_id, "restored.safetensors")
+cas.uri(file_id)                            # gs://<bucket>/<prefix>/<id>
+```
+
+Bucket/prefix/project: `FERRY_CAS_BUCKET` / `FERRY_CAS_PREFIX` /
+`FERRY_CAS_PROJECT` (legacy `CLOUDFS_*` still honored), defaulting to the
+same bucket+prefix cloudfs used, so existing ids keep resolving. CLI:
+`ferry cas upload|download|exists|rm|uri`.
+
+Rule of thumb: moving an experiment *tree* by path → `ferry.push/pull`;
+storing/serving a single artifact by *content hash* (dedup, stable ids) →
+`ferry.cas`.
