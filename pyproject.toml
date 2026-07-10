@@ -1,0 +1,7 @@
+# Virtual workspace root — not a package. `uv sync --all-packages` gives one
+# venv with every tool (and every CLI) installed editable.
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[dependency-groups]
+dev = ["pytest>=8"]
