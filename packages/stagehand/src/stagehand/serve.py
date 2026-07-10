@@ -1,64 +1,47 @@
-"""Serve a runs/ directory (its status.html) behind a public tunnel.
+"""Serve a runs/ directory (its status.html) behind a public URL.
 
-Two backends, tried in order:
-
-1. **lobby** (https://github.com/dtch1997/lobby) — registers the dashboard with
-   the shared hub daemon, so every stagehand run (and cowrite report, etc.) lives
-   under ONE tunnel URL with a central index page.
-2. **marquee** (https://github.com/dtch1997/marquee) — the original standalone
-   per-run tunnel (pluggable providers: cloudflared / localhost.run / ngrok).
-
-Both are imported lazily, so importing stagehand never requires either.
+The serving + tunnelling implementation lives in the **lobby** library
+(https://github.com/dtch1997/lobby): every dashboard registers with the shared
+hub daemon, so all runs (and cowrite reports, databrowsers, ...) live under ONE
+tunnel URL with a central index page. This stays as a thin, lazy wrapper so
+`from stagehand import serve` keeps working — `lobby` is imported only when you
+call `serve()`, so importing stagehand never requires it.
 
     from stagehand import serve
-    url, stop = serve("runs", name="sleeper-sweep")   # hub: https://<hub>…/a/sleeper-sweep/status.html
-    url, stop = serve("runs", hub=False)              # standalone: https://….trycloudflare.com/status.html
+    url, stop = serve("runs", name="sleeper-sweep")  # -> https://<hub>…/a/sleeper-sweep/status.html
+
+Install the implementation with `pip install git+https://github.com/dtch1997/lobby`.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
 
-def _marquee():
+def _lobby():
     try:
-        import marquee
+        import lobby
     except ModuleNotFoundError as e:
         raise RuntimeError(
-            "stagehand.serve needs the `lobby` or `marquee` library — install one with "
-            "`pip install git+https://github.com/dtch1997/lobby` (shared hub) or "
-            "`pip install git+https://github.com/dtch1997/marquee` (standalone tunnel).") from e
-    return marquee
+            "stagehand.serve is implemented by the `lobby` library — install it with "
+            "`pip install git+https://github.com/dtch1997/lobby`.") from e
+    return lobby
 
 
-def serve(directory, *, entry="status.html", name=None, title=None, port=None,
-          provider="cloudflare", wait=40.0, hub=None):
-    """Serve `directory` over a local HTTP server + a public tunnel.
+def serve(directory, *, entry="status.html", name=None, title=None, port=None):
+    """Serve `directory` through the shared lobby hub; return `(url, stop)`.
 
-    Returns `(url, stop)`. By default (`hub=None`) the dashboard registers with the
-    shared `lobby` hub when lobby is installed — one tunnel + index page across all
-    runs — and falls back to a standalone `marquee` tunnel otherwise. Force a
-    backend with `hub=True` / `hub=False`. `name`/`title` label the run on the hub
-    index (name defaults to the directory name); `provider`/`wait` apply to the
-    marquee path. Raises RuntimeError if neither library is installed.
+    One tunnel + one index page across all runs — `name`/`title` label this run
+    on the hub index (name defaults to the directory name). `stop()` kills the
+    file server; the hub then shows the run as ended. Raises RuntimeError if
+    lobby isn't installed.
     """
-    if hub is not False:
-        try:
-            import lobby
-        except ModuleNotFoundError:
-            if hub is True:
-                raise RuntimeError(
-                    "serve(hub=True) needs the `lobby` library — install it with "
-                    "`pip install git+https://github.com/dtch1997/lobby`.") from None
-        else:
-            return lobby.serve_dir(
-                str(directory), name=name or Path(directory).resolve().name,
-                kind="stagehand", title=title, entry=entry, port=port,
-            )
-    return _marquee().serve(directory, entry=entry, port=port,
-                            provider=provider, wait=wait)
+    return _lobby().serve_dir(
+        str(directory), name=name or Path(directory).resolve().name,
+        kind="stagehand", title=title, entry=entry, port=port,
+    )
 
 
 def parse_tunnel_url(text: str):
     """Pull a Cloudflare quick-tunnel URL out of log text (or None). Delegates to
-    `marquee` (kept for back-compat)."""
-    return _marquee().parse_tunnel_url(text)
+    `lobby` (kept for back-compat)."""
+    return _lobby().parse_tunnel_url(text)

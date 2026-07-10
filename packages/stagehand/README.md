@@ -22,7 +22,7 @@ fleet of coding agents, a data pipeline, or an eval harness. The core is pure st
 | `agents`    | **coding agents as steps**: `agent(flow, prompt, …)` → `AgentOutcome`, behind a backend seam (zero-dep `subprocess_backend`, or the recommended lazy `flightdeck_backend()`) |
 | `live`      | `live_dashboard` — poll a running flow's monitor tree and re-render one auto-refreshing HTML status page |
 | `artifacts` | **content-addressed inputs/outputs with lineage**: `ArtifactStore` persists files/dirs/secrets by content hash and tracks `inputs` + `produced_by`, behind a backend seam (zero-dep `local_backend`, or the default lazy `cloudfs_backend()`) |
-| `serve`     | put `status.html` behind a public tunnel for a live link — registers with the shared [`lobby`](https://github.com/dtch1997/lobby) hub (one tunnel + index across all runs) when installed, else a standalone [`marquee`](https://github.com/dtch1997/marquee) tunnel (cloudflared / localhost.run / ngrok) |
+| `serve`     | put `status.html` behind a public URL for a live link — a lazy wrapper over the shared [`lobby`](https://github.com/dtch1997/lobby) hub: one tunnel + one index page across all runs |
 | `manifest`  | **automatic provenance**: every `flow.run()` writes `runs_dir/manifest.json` (git sha/dirty/branch, argv, config, …) and every `store.put()` stamps `meta["git"]` — results always answer *"which code produced this?"* |
 | `memo`      | **content-keyed step memoization**: `Flow(memo=…)` persists every successful result keyed on fn source + input values — identical re-runs are free (crashed sweeps resume), changed steps re-run, `run(refresh=True)` deliberately resamples |
 
@@ -148,15 +148,13 @@ async with live_dashboard("runs", title="my run"):
         stop()
 ```
 
-`serve` is a thin lazy shim over two backends. With [**lobby**](https://github.com/dtch1997/lobby)
-installed (the default when present), the dashboard registers with the shared hub daemon:
-every run lives under **one** tunnel URL, with a central index page listing all your
-dashboards and reports (`name`/`title` label the entry). Otherwise — or with `hub=False` —
-it falls back to the standalone [**marquee**](https://github.com/dtch1997/marquee) library,
-one tunnel per run behind a pluggable provider seam (`cloudflared` by default, zero-install
-`localhost.run` over `ssh`, or `ngrok`). Both are imported only when you call `serve()`, so
-the core stays dependency-free — install one with
-`pip install git+https://github.com/dtch1997/lobby` (or `…/marquee`).
+`serve` is a thin lazy wrapper over the [**lobby**](https://github.com/dtch1997/lobby)
+library: the dashboard registers with the shared hub daemon, so every run lives under
+**one** tunnel URL with a central index page listing all your dashboards and reports
+(`name`/`title` label the entry; the tunnel itself is lobby's built-in
+pluggable-provider seam, `lobby.tunnel`). lobby is imported only when
+you call `serve()`, so the core stays dependency-free — install it with
+`pip install git+https://github.com/dtch1997/lobby`.
 
 ## The monitor primitive
 

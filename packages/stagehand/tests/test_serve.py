@@ -1,6 +1,6 @@
-"""Unit tests for the serve shim. The implementations live in the `lobby` and
-`marquee` libraries (tested there); here we cover backend selection: lobby
-preferred, marquee fallback, forced modes, and clear errors when absent."""
+"""Unit tests for the serve shim. The implementation lives in the `lobby`
+library (tested there); here we cover the lazy wrapper: a clear error when
+lobby is absent, and that calls delegate to it when present."""
 import builtins
 import sys
 import types
@@ -36,31 +36,19 @@ def _fake_lobby(monkeypatch, calls):
     monkeypatch.setitem(sys.modules, "lobby", fake)
 
 
-def _fake_marquee(monkeypatch, calls):
-    fake = types.ModuleType("marquee")
-
-    def fake_serve(directory, *, entry, port, provider, wait):
-        calls.update(directory=directory, entry=entry, provider=provider)
-        return "https://x.trycloudflare.com/status.html", lambda: None
-
-    fake.serve = fake_serve
-    fake.parse_tunnel_url = lambda text: "PARSED"
-    monkeypatch.setitem(sys.modules, "marquee", fake)
-
-
-def test_serve_errors_clearly_without_either_backend(monkeypatch, tmp_path):
-    _hide(monkeypatch, "lobby", "marquee")
-    with pytest.raises(RuntimeError, match="lobby.*marquee|marquee.*lobby"):
+def test_serve_errors_clearly_without_lobby(monkeypatch, tmp_path):
+    _hide(monkeypatch, "lobby")
+    with pytest.raises(RuntimeError, match="lobby"):
         serve(tmp_path)
 
 
-def test_parse_tunnel_url_errors_clearly_without_marquee(monkeypatch):
-    _hide(monkeypatch, "marquee")
-    with pytest.raises(RuntimeError, match="marquee"):
+def test_parse_tunnel_url_errors_clearly_without_lobby(monkeypatch):
+    _hide(monkeypatch, "lobby")
+    with pytest.raises(RuntimeError, match="lobby"):
         parse_tunnel_url("https://x.trycloudflare.com")
 
 
-def test_serve_prefers_lobby_hub(monkeypatch, tmp_path):
+def test_serve_delegates_to_lobby(monkeypatch, tmp_path):
     calls = {}
     _fake_lobby(monkeypatch, calls)
     runs = tmp_path / "runs"
@@ -69,10 +57,10 @@ def test_serve_prefers_lobby_hub(monkeypatch, tmp_path):
     url, stop = serve(runs, name="sweep", title="Sleeper sweep")
     assert url == "https://hub.example/a/sweep/status.html"
     assert calls["kind"] == "stagehand" and calls["title"] == "Sleeper sweep"
-    assert calls["directory"] == str(runs)
+    assert calls["directory"] == str(runs) and callable(stop)
 
 
-def test_serve_hub_name_defaults_to_directory_name(monkeypatch, tmp_path):
+def test_serve_name_defaults_to_directory_name(monkeypatch, tmp_path):
     calls = {}
     _fake_lobby(monkeypatch, calls)
     runs = tmp_path / "my-flow-runs"
@@ -81,30 +69,8 @@ def test_serve_hub_name_defaults_to_directory_name(monkeypatch, tmp_path):
     assert calls["name"] == "my-flow-runs"
 
 
-def test_serve_falls_back_to_marquee_without_lobby(monkeypatch):
-    calls = {}
-    _hide(monkeypatch, "lobby")
-    _fake_marquee(monkeypatch, calls)
-
-    url, stop = serve("runs", provider="ngrok")
-    assert url.endswith("/status.html") and calls["provider"] == "ngrok"
-
-
-def test_serve_hub_false_forces_marquee(monkeypatch):
-    lobby_calls, marquee_calls = {}, {}
-    _fake_lobby(monkeypatch, lobby_calls)
-    _fake_marquee(monkeypatch, marquee_calls)
-
-    url, _ = serve("runs", hub=False)
-    assert not lobby_calls and marquee_calls["directory"] == "runs"
-
-
-def test_serve_hub_true_requires_lobby(monkeypatch, tmp_path):
-    _hide(monkeypatch, "lobby")
-    with pytest.raises(RuntimeError, match="lobby"):
-        serve(tmp_path, hub=True)
-
-
 def test_parse_tunnel_url_delegates(monkeypatch):
-    _fake_marquee(monkeypatch, {})
+    fake = types.ModuleType("lobby")
+    fake.parse_tunnel_url = lambda text: "PARSED"
+    monkeypatch.setitem(sys.modules, "lobby", fake)
     assert parse_tunnel_url("anything") == "PARSED"
