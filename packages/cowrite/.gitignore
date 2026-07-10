@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# cowrite runtime state (if pointed here via COWRITE_STATE_DIR)
+.cowrite/
+state/
+
+# generated
+uv.lock

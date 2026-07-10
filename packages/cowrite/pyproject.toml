@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cowrite"
+version = "0.3.0"
+description = "Co-write Markdown drafts with an AI in the browser — a live side-by-side editor with a save-to-disk round-trip, served through the shared lobby hub."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Daniel Tan" }]
+keywords = ["markdown", "editor", "writing", "ai", "blogpost", "cloudflare-tunnel"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Topic :: Text Processing :: Markup :: Markdown",
+]
+dependencies = [
+  "markdown>=3.4",
+  "pygments>=2.0",
+  "lobby @ git+https://github.com/dtch1997/lobby",
+]
+
+[project.urls]
+Homepage = "https://github.com/dtch1997/cowrite"
+Repository = "https://github.com/dtch1997/cowrite"
+
+[project.scripts]
+cowrite = "cowrite.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cowrite"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
