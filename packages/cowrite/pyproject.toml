@@ -19,7 +19,7 @@ classifiers = [
 dependencies = [
   "markdown>=3.4",
   "pygments>=2.0",
-  "lobby @ git+https://github.com/dtch1997/lobby",
+  "lobby @ git+https://github.com/dtch1997/arsenal#subdirectory=packages/lobby",
 ]
 
 [project.urls]
@@ -34,3 +34,6 @@ packages = ["src/cowrite"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
+
+[tool.uv.sources]
+lobby = { workspace = true }

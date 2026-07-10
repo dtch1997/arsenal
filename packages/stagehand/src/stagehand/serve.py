@@ -10,7 +10,7 @@ call `serve()`, so importing stagehand never requires it.
     from stagehand import serve
     url, stop = serve("runs", name="sleeper-sweep")  # -> https://<hub>…/a/sleeper-sweep/status.html
 
-Install the implementation with `pip install git+https://github.com/dtch1997/lobby`.
+Install the implementation with `pip install "git+https://github.com/dtch1997/arsenal#subdirectory=packages/lobby"`.
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ def _lobby():
     except ModuleNotFoundError as e:
         raise RuntimeError(
             "stagehand.serve is implemented by the `lobby` library — install it with "
-            "`pip install git+https://github.com/dtch1997/lobby`.") from e
+            "`pip install \"git+https://github.com/dtch1997/arsenal#subdirectory=packages/lobby\"`.") from e
     return lobby
 
 
