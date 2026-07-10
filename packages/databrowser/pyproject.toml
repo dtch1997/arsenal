@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 license-files = ["LICENSE"]
-dependencies = ["lobby @ git+https://github.com/dtch1997/lobby"]
+dependencies = ["lobby @ git+https://github.com/dtch1997/arsenal#subdirectory=packages/lobby"]
 
 [project.scripts]
 databrowser = "databrowser.cli:main"
@@ -23,3 +23,6 @@ packages = ["databrowser"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
+
+[tool.uv.sources]
+lobby = { workspace = true }
