@@ -1,0 +1,18 @@
+{
+  "assignee": "dtch1997@users.noreply.github.com",
+  "blocked_by": [
+    "stg-teu.1",
+    "stg-teu.2"
+  ],
+  "closed_at": "2026-07-02T15:04:54Z",
+  "created": "2026-07-02T14:13:15Z",
+  "description": "Validate the ergonomics of the new manifest + memoization path by porting one real pipeline: sdf-hallucination's eval chain (sample \u2192 classify \u2192 plot). Chosen because it's the cleanest staged pipeline of the six audited repos and currently has the silent-overwrite bug that memoization kills (run_refclass_eval.py:97 overwrites raw responses unconditionally). Success = the port is less code than the original scripts, re-runs are free, figures regenerate from artifacts, and the manifest answers 'which commit produced this figure'. Friction found here feeds back into stg-teu.1/stg-teu.2 before wider migration.\n\n## Acceptance criteria\nsdf-hallucination eval chain runs as a stagehand Flow; re-run with unchanged inputs does zero API calls; each output artifact traceable to git SHA + config; write-up of ergonomic friction filed against the parent issues.\n\n## Notes\nPilot implemented + validated live \u2192 https://github.com/ArcadiaImpact/sdf-hallucination/pull/5 (scripts/refclass_flow.py). Acceptance met: identical re-run = zero API calls (8s replay), replay works with NO keys in env, manifest answers which-commit, --smoke runs whole DAG into results/smoke/. Close on merge.",
+  "id": "stg-teu.4",
+  "labels": [],
+  "parent": "stg-teu",
+  "priority": 2,
+  "status": "closed",
+  "title": "Pilot: port sdf-hallucination eval chain to a stagehand Flow",
+  "type": "task",
+  "updated": "2026-07-02T15:04:54Z"
+}

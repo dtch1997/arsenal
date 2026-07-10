@@ -1,0 +1,15 @@
+{
+  "assignee": "dtch1997@users.noreply.github.com",
+  "blocked_by": [],
+  "closed_at": null,
+  "created": "2026-07-02T14:51:18Z",
+  "description": "Two patterns surfaced by the sdf-hallucination pilot (stg-teu.4) that every memo user must know: (1) anything that affects a step's answer must travel through the step's INPUTS \u2014 module-level constants and closure values don't enter memo keys; bundle params into the mapped items. (2) Flow-level smoke=N truncates DAG fan-outs but in-step batch sizes (n samples per probe, panel sizes) need config cooperation \u2014 the standard pattern is a smoke-aware config feeding the cell dicts. Also note side-effect steps (figure writing) don't fit memoization (replay skips side effects) \u2014 keep them post-run as pure functions over results. Add to README memo section + a cookbook recipe.\n\n## Notes\nREADME side is DONE (config-first cheap-first section landed with PR #22); remaining scope = cookbook recipe + inputs-through-cells pattern write-up.",
+  "id": "stg-teu.5",
+  "labels": [],
+  "parent": "stg-teu",
+  "priority": 3,
+  "status": "open",
+  "title": "Document memoization usage patterns (inputs-through-cells, smoke config cooperation)",
+  "type": "task",
+  "updated": "2026-07-02T14:59:38Z"
+}

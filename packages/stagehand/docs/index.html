@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>stagehand — a declarative engine for orchestrating steps at scale</title>
+<meta name="description" content="A tiny Python library: a declarative DAG engine that streams steps with fan-out/retry, type-checked graphs, coding-agent steps, and a live HTML dashboard. Pure stdlib.">
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fdfdfc; --fg: #1f2328; --muted: #656d76; --line: #e3e6ea;
+    --card: #fff; --accent: #1a73e8; --running: #1a73e8; --done: #188038;
+    --failed: #d93025; --codebg: #f6f8fa; --codefg: #24292f;
+    --running-soft: rgba(26,115,232,.12); --done-soft: rgba(24,128,56,.12);
+    --failed-soft: rgba(217,48,37,.11); --rule: #c2c8d0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --line: #21262d;
+      --card: #161b22; --accent: #4493f8; --running: #4493f8; --done: #3fb950;
+      --failed: #f85149; --codebg: #161b22; --codefg: #e6edf3;
+      --running-soft: rgba(68,147,248,.16); --done-soft: rgba(63,185,80,.15);
+      --failed-soft: rgba(248,81,73,.15); --rule: #3d444d;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 0 1.3rem; }
+  code, pre, .mono { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
+
+  header { padding: 4.5rem 0 3.2rem; border-bottom: 2px solid var(--rule); }
+  .brand { font-size: 2.7rem; font-weight: 700; letter-spacing: -0.02em; margin: 0; }
+  .brand::before { content: "▸ "; color: var(--accent); }
+  .tagline { font-size: 1.25rem; color: var(--muted); margin: 0.6rem 0 0; }
+  .lede { margin: 1.6rem 0 2rem; font-size: 1.05rem; }
+  .lede b { font-weight: 600; }
+
+  .btns { display: flex; gap: 0.7rem; flex-wrap: wrap; }
+  .btn {
+    display: inline-block; padding: 0.55rem 1.1rem; border-radius: 8px;
+    text-decoration: none; font-weight: 600; font-size: 0.95rem;
+    border: 1px solid var(--line);
+  }
+  .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .btn.ghost { color: var(--fg); background: var(--card); }
+
+  section { padding: 2.6rem 0; border-bottom: 1px solid var(--line); }
+  h2 { font-size: 1.4rem; margin: 0 0 1rem; letter-spacing: -0.01em; }
+  p { margin: 0 0 1rem; }
+  .muted { color: var(--muted); }
+
+  pre {
+    background: var(--codebg); color: var(--codefg); padding: 1.1rem 1.2rem;
+    border-radius: 10px; overflow-x: auto; font-size: 0.88rem; line-height: 1.55;
+    border: 1px solid var(--line); margin: 0;
+  }
+  pre .k { color: var(--running); } pre .s { color: var(--done); }
+  pre .c { color: var(--muted); } pre .f { color: #8250df; }
+  @media (prefers-color-scheme: dark) { pre .f { color: #d2a8ff; } }
+  p code { background: var(--codebg); padding: 0.1em 0.4em; border-radius: 5px; font-size: 0.88em; }
+
+  .layers { display: grid; gap: 0.9rem; grid-template-columns: 1fr 1fr; margin-top: 0.4rem; }
+  @media (max-width: 560px) { .layers { grid-template-columns: 1fr; } }
+  .layer { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 1rem 1.1rem; }
+  .layer h3 { margin: 0 0 0.3rem; font-size: 1rem; }
+  .layer h3 code { font-size: 1rem; color: var(--accent); background: none; padding: 0; }
+  .layer p { margin: 0; font-size: 0.92rem; color: var(--muted); }
+
+  /* mini replica of the real status.html the library renders */
+  .dash { background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .dash .bar { padding: 0.6rem 1rem; border-bottom: 1px solid var(--line); font-size: 0.9rem; }
+  .dash .bar b { font-weight: 700; }
+  .dash table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+  .dash td { padding: 0.4rem 1rem; border-bottom: 1px solid var(--line); }
+  .dash tr:last-child td { border-bottom: 0; }
+  .dash .nm { font-family: ui-monospace, monospace; }
+  .dash .ind { padding-left: 2.4rem; }
+  .pill { color: #fff; padding: 0.05rem 0.5rem; border-radius: 999px; font-size: 0.78rem; }
+  .pill.running { background: var(--running); } .pill.done { background: var(--done); }
+  .pill.failed { background: var(--failed); }
+  .right { text-align: right; font-variant-numeric: tabular-nums; }
+
+  /* animated hero demo */
+  .demo { margin-top: 2.4rem; }
+  .demo-cap { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem; }
+  .demo-cap .lbl { font-size: 0.85rem; color: var(--muted); }
+  .demo-cap .lbl .dot {
+    display: inline-block; width: 0.5rem; height: 0.5rem; border-radius: 50%;
+    background: var(--running); margin-right: 0.45rem; vertical-align: middle;
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
+  .replay {
+    background: none; border: 1px solid var(--line); color: var(--muted);
+    border-radius: 6px; padding: 0.2rem 0.65rem; font: inherit; font-size: 0.8rem; cursor: pointer;
+  }
+  .replay:hover { color: var(--fg); border-color: var(--muted); }
+  /* fixed pane: reserve space for the full board (5 rows) so appearing rows
+     fill in rather than reflowing the page */
+  .demo .dash-body { min-height: 11.8rem; }
+  #demo-dash td { transition: none; }
+  #demo-dash .prog { position: relative; min-width: 92px; }
+  #demo-dash .progbar { position: absolute; left: 0; top: 3px; bottom: 3px; border-radius: 3px; z-index: 0; }
+  #demo-dash .progbar.running { background: var(--running-soft); }
+  #demo-dash .progbar.done { background: var(--done-soft); }
+  #demo-dash .progbar.failed { background: var(--failed-soft); }
+  #demo-dash .cnt { position: relative; z-index: 1; }
+  #demo-dash .note.err { color: var(--failed); }
+  .manifest {
+    padding: 0.6rem 1rem; border-top: 1px solid var(--line);
+    font-size: 0.85rem; color: var(--done); font-weight: 600;
+    opacity: 0; transition: opacity 0.4s;
+  }
+  .manifest.show { opacity: 1; }
+  @media (prefers-reduced-motion: reduce) { .demo-cap .lbl .dot { animation: none; } }
+
+  footer { padding: 2.5rem 0 4rem; color: var(--muted); font-size: 0.9rem; }
+  footer a { color: var(--accent); }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1 class="brand mono">stagehand</h1>
+    <p class="tagline">A declarative engine for orchestrating steps at scale.</p>
+    <p class="lede">
+      Declare <b>what</b> work needs doing and how the pieces depend on each other; the
+      engine figures out <b>how</b> — streaming results between steps, fanning out,
+      retrying, and stopping early — and renders the whole thing as one live page. A step
+      is just an async function, so the same engine drives an experiment sweep, a fleet of
+      coding agents, or a data pipeline. Pure standard library, no framework to adopt.
+    </p>
+    <div class="btns">
+      <a class="btn primary" href="https://github.com/dtch1997/stagehand">GitHub →</a>
+      <a class="btn ghost" href="https://github.com/dtch1997/stagehand#readme">Read the docs</a>
+    </div>
+
+    <div class="demo">
+      <div class="demo-cap">
+        <span class="lbl"><span class="dot"></span><span id="demo-clock">a sweep, live</span></span>
+        <button class="replay" id="demo-replay" type="button">↻ replay</button>
+      </div>
+      <div class="dash">
+        <div class="bar" id="demo-bar"></div>
+        <div class="dash-body"><table id="demo-dash"></table></div>
+        <div class="manifest" id="demo-manifest">✓ manifest written · 2/3 healthy · handed off to Workflow</div>
+      </div>
+    </div>
+  </header>
+
+  <section>
+    <h2>Declare the DAG; the engine runs it</h2>
+    <p>
+      You declare <b>what</b> work needs doing and how the pieces depend on each other; the
+      engine figures out <b>how</b> to run it. A node like <span class="mono">map</span> stamps out
+      one task per item and wires its dependencies, so the scheduler runs everything that's
+      <i>ready</i> — <span class="mono">eval(cell_0)</span> starts the moment
+      <span class="mono">train(cell_0)</span> finishes, while <span class="mono">train(cell_2)</span> is
+      still going. No barriers except where a node needs its whole upstream collection — that's
+      <span class="mono">reduce</span>.
+    </p>
+<pre>flow = Flow(<span class="s">"runs"</span>, title=<span class="s">"my sweep"</span>, concurrency=<span class="s">8</span>)
+trained = flow.map(<span class="s">"train"</span>, cells, train_one)            <span class="c"># one task per cell</span>
+healthy = flow.filter(<span class="s">"gate"</span>, trained, is_healthy)       <span class="c"># survivors stream on</span>
+evals   = flow.map(<span class="s">"eval"</span>, healthy, eval_one)            <span class="c"># eval_i waits on train_i only</span>
+best    = flow.reduce(<span class="s">"pick"</span>, evals, choose_best)        <span class="c"># the *only* barrier</span>
+
+<span class="k">async with</span> live_dashboard(flow.runs_dir, title=<span class="s">"my sweep"</span>):
+    <span class="k">await</span> flow.run(stop_when=<span class="k">lambda</span> s: s.done &gt;= <span class="s">100</span>)   <span class="c"># early-exit optional</span></pre>
+  </section>
+
+  <section>
+    <h2>Fan out, retry, expand</h2>
+    <p>
+      <span class="mono">best_of</span> and <span class="mono">with_retry</span> are <b>node policies</b> —
+      unit-fns you drop into <span class="mono">map</span>: <span class="mono">best_of</span> runs N attempts
+      per item and keeps the best (objective <span class="mono">score</span> or async
+      <span class="mono">judge</span>); <span class="mono">with_retry</span> re-runs an item that flunks its
+      <span class="mono">check</span> — or raises — feeding feedback back in until it passes.
+      <span class="mono">expand</span> handles <b>dynamic fan-out</b>: one upstream result becomes a
+      data-dependent number of downstream tasks.
+    </p>
+<pre><span class="c"># N attempts per item, keep the best — shows up as an ordinary node</span>
+best = flow.map(<span class="s">"solve"</span>, units, best_of(solve, n=<span class="s">4</span>, score=<span class="k">lambda</span> r: r[<span class="s">"reward"</span>]))
+
+<span class="c"># retry each item with feedback until it parses</span>
+fixed = flow.map(<span class="s">"fix"</span>, units, with_retry(solve, check=parses, max_attempts=<span class="s">3</span>))
+
+<span class="c"># train emits K checkpoints (K unknown until runtime) -> eval each</span>
+ckpts = flow.expand(<span class="s">"ckpts"</span>, trained, <span class="k">lambda</span> r: r[<span class="s">"checkpoints"</span>])
+evals = flow.map(<span class="s">"eval"</span>, ckpts, eval_one)</pre>
+    <p class="muted">
+      A handle is a placeholder, so you can't <span class="mono">if</span> on its value while building —
+      put result-dependent control flow <i>inside</i> a node fn (a normal coroutine: plain
+      <span class="mono">await</span> / <span class="mono">if</span>; raise to prune), or use
+      <span class="mono">filter</span> / <span class="mono">expand</span>.
+    </p>
+  </section>
+
+  <section>
+    <h2>Compile the graph</h2>
+    <p>
+      Steps declare their I/O with plain type hints. <span class="mono">flow.check()</span> reads them
+      and verifies the graph can run start to end — every dependency exists, no cycles, and each
+      edge's producer type fits the consumer — <i>before</i> you spend any compute.
+    </p>
+<pre><span class="k">async def</span> train(cfg: Config) -&gt; Model: ...
+<span class="k">async def</span> evaluate(m: Model) -&gt; Eval: ...
+
+flow.check()                 <span class="c"># raises on a malformed / ill-typed graph</span>
+<span class="k">await</span> flow.run(check=<span class="s">True</span>)   <span class="c"># check first, then run</span>
+
+<span class="c"># flow check failed:</span>
+<span class="c">#   - map 'eval' &lt;- 'train': expects str, got Model</span></pre>
+    <p class="muted">
+      <span class="mono">Handle[T]</span> is generic, so <span class="mono">.result</span> is typed in your editor.
+      Gradual and pragmatic — unannotated is <span class="mono">Any</span>, subclasses / <span class="mono">list[T]</span> /
+      <span class="mono">Optional</span> are handled. A linter, not a type system.
+    </p>
+  </section>
+
+  <section>
+    <h2>Coding agents as steps</h2>
+    <p>
+      An agent is just a step. <span class="mono">agent(flow, prompt, …)</span> spawns a headless coding agent
+      and returns a structured <span class="mono">AgentOutcome</span>, so it composes with everything —
+      <span class="mono">best_of</span> for best-of-N agents (judge picks the best patch),
+      <span class="mono">with_retry</span> for retry-with-feedback, <span class="mono">reduce</span> to merge.
+    </p>
+<pre>flow  = Flow(<span class="s">"runs"</span>, concurrency=<span class="s">4</span>)
+patch = agent(flow, <span class="s">"fix the failing test in foo.py"</span>, isolation=<span class="s">"worktree"</span>)
+best  = flow.map(<span class="s">"solve"</span>, issues, best_of(solve_agent, n=<span class="s">4</span>, judge=pick_best))  <span class="c"># best-of-N agents</span>
+<span class="k">await</span> flow.run()
+<span class="nb">print</span>(patch.result.diff)</pre>
+    <p class="muted">
+      <span class="mono">isolation="worktree"</span> runs each agent in its own throwaway git worktree and
+      captures the diff. Backends sit behind a seam so the core stays dependency-free:
+      <span class="mono">subprocess_backend</span> (zero-dep <span class="mono">claude -p</span>) by default, or the
+      recommended <span class="mono">flightdeck_backend()</span> for live stream capture to the dashboard
+      (<span class="mono">flightdeck</span> imported lazily — an optional integration, not a dependency).
+    </p>
+  </section>
+
+  <section>
+    <h2>What you watch</h2>
+    <p class="muted">
+      Every unit of work writes a small JSON file as it runs; the dashboard reads that tree
+      and renders one auto-refreshing page. A unit that flunks a gate goes red — the
+      broken-harness failure mode shows up instead of silently poisoning the results.
+    </p>
+    <div class="dash">
+      <div class="bar"><b style="color:var(--accent)">my sweep</b>
+        <span class="muted">· 1h07m elapsed · 6 units</span> &nbsp;
+        <b style="color:var(--done)">9 done</b> &nbsp;
+        <b style="color:var(--running)">2 running</b> &nbsp;
+        <b style="color:var(--failed)">1 failed</b>
+      </div>
+      <table>
+        <tr><td class="nm">cell_s0</td><td><span class="pill done">done</span></td><td class="right">256/256</td><td class="muted">acc 0.74</td></tr>
+        <tr><td class="nm ind">cell_s0 · eval</td><td><span class="pill done">done</span></td><td class="right">1/1</td><td class="muted">acc 0.74 / rej 0.26</td></tr>
+        <tr><td class="nm">cell_s1</td><td><span class="pill running">running</span></td><td class="right">181/256</td><td class="muted">loss 0.42</td></tr>
+        <tr><td class="nm">cell_s2</td><td><span class="pill failed">failed</span></td><td class="right">256/256</td><td style="color:var(--failed)">gate: no/invalid checkpoint</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Layers, each usable on its own</h2>
+    <div class="layers">
+      <div class="layer">
+        <h3><code>monitor</code></h3>
+        <p>A file-backed <span class="mono">running/done/failed</span> + <span class="mono">done/total</span> ticker per unit of work. Units link via <span class="mono">parent</span> into a tree. Captures exceptions, then re-raises.</p>
+      </div>
+      <div class="layer">
+        <h3><code>dashboard</code></h3>
+        <p>Render that tree into one self-contained, auto-refreshing HTML page. Title and per-row note are injectable; everything else is automatic.</p>
+      </div>
+      <div class="layer">
+        <h3><code>engine</code></h3>
+        <p>The DAG engine. Declare with <span class="mono">map</span> / <span class="mono">filter</span> / <span class="mono">reduce</span> / <span class="mono">expand</span> / <span class="mono">spawn</span> / <span class="mono">add</span>, add <span class="mono">best_of</span> / <span class="mono">with_retry</span> node policies, then <span class="mono">await flow.run(stop_when=…)</span>. Streams between nodes, fans out dynamically, exits early on a criterion.</p>
+      </div>
+      <div class="layer">
+        <h3><code>agents</code></h3>
+        <p>Coding agents as steps: <span class="mono">agent(flow, prompt, …)</span> → <span class="mono">AgentOutcome</span>, with worktree isolation. Backend seam — zero-dep <span class="mono">subprocess_backend</span> or the recommended lazy <span class="mono">flightdeck_backend()</span>. Composes with best_of / with_retry.</p>
+      </div>
+      <div class="layer">
+        <h3><code>pipeline</code></h3>
+        <p><span class="mono">live_dashboard</span> — poll the graph's monitor tree into one auto-refreshing page while it runs — plus <span class="mono">headless_handoff</span> to hand a finished run to a non-interactive <span class="mono">claude -p</span>.</p>
+      </div>
+      <div class="layer">
+        <h3><code>serve</code></h3>
+        <p>Put the dashboard behind a Cloudflare quick tunnel for a public live link — <span class="mono">serve(dir) → (url, stop)</span>. Watch a run from anywhere. (Needs the <span class="mono">cloudflared</span> binary.)</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Quickstart</h2>
+<pre><span class="c"># add it</span>
+uv add git+https://github.com/dtch1997/stagehand
+
+<span class="c"># or clone and run the worked example (fake compute, no network)</span>
+git clone https://github.com/dtch1997/stagehand &amp;&amp; cd stagehand
+make example     <span class="c"># runs the worked sweep → writes runs/status.html</span>
+make test        <span class="c"># unit tests</span></pre>
+    <p class="muted" style="margin-top:1rem">
+      The single primitive underneath it all:
+    </p>
+<pre><span class="k">with</span> monitor(<span class="s">"cell_s0"</span>, total=<span class="s">256</span>, path=<span class="s">"runs/cell_s0/train.progress.json"</span>,
+             parent=<span class="s">"sweep"</span>) <span class="k">as</span> m:
+    <span class="k">for</span> batch <span class="k">in</span> batches:
+        m.update(loss=train_step(batch))   <span class="c"># advance the ticker, record fields</span></pre>
+  </section>
+
+  <footer>
+    <p>
+      <span class="mono">stagehand</span> — extracted from a real research sweep and de-coupled from any one experiment.
+      MIT licensed · pure stdlib core ·
+      <a href="https://github.com/dtch1997/stagehand">github.com/dtch1997/stagehand</a>
+    </p>
+  </footer>
+
+</div>
+
+<script>
+(function () {
+  // A tiny JS echo of the library's own model: a list of "monitor" units that a
+  // render() function turns into the status tree — here ticked through a scripted
+  // sweep so the page demonstrates exactly what stagehand produces.
+  var T = 256; // train steps per cell
+  // start/dur in simulated seconds; rendered in fixed tree order (cell, its eval, ...)
+  var UNITS = [
+    { name: "cell_s0",        indent: 0, total: T, start: 0.0, dur: 6.0, end: "done",   endNote: "acc 0.74" },
+    { name: "cell_s0 · eval", indent: 1, total: 1, start: 6.3, dur: 1.6, end: "done",   endNote: "acc 0.74 / rej 0.26" },
+    { name: "cell_s1",        indent: 0, total: T, start: 0.4, dur: 7.4, end: "done",   endNote: "acc 0.61" },
+    { name: "cell_s1 · eval", indent: 1, total: 1, start: 7.9, dur: 1.6, end: "done",   endNote: "acc 0.61 / rej 0.39" },
+    { name: "cell_s2",        indent: 0, total: T, start: 0.7, dur: 5.4, end: "failed", endNote: "gate: no/invalid checkpoint" }
+  ];
+  var RUN_END = 9.5, LOOP_END = 13.0;   // hold the finished board, then loop
+
+  var dashEl = document.getElementById("demo-dash");
+  var barEl = document.getElementById("demo-bar");
+  var manifestEl = document.getElementById("demo-manifest");
+  var clockEl = document.getElementById("demo-clock");
+  if (!dashEl) return;
+  var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  function snap(u, t) {
+    if (t < u.start) return null;                 // not created yet
+    if (t >= u.start + u.dur) {                   // terminal
+      return { state: u.end, done: u.total, frac: 1, note: u.endNote, err: u.end === "failed" };
+    }
+    var p = (t - u.start) / u.dur;                // running
+    var note = u.total > 1 ? "loss " + (2.0 - 1.55 * p).toFixed(2) : "eval";
+    return { state: "running", done: Math.floor(p * u.total), frac: p, note: note, err: false };
+  }
+
+  function esc(s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;"); }
+
+  function render(t) {
+    var rows = "", counts = { running: 0, done: 0, failed: 0 };
+    for (var i = 0; i < UNITS.length; i++) {
+      var u = UNITS[i], s = snap(u, t);
+      if (!s) continue;
+      counts[s.state]++;
+      rows +=
+        '<tr><td class="nm' + (u.indent ? " ind" : "") + '">' + esc(u.name) + '</td>' +
+        '<td><span class="pill ' + s.state + '">' + s.state + '</span></td>' +
+        '<td class="prog"><div class="progbar ' + s.state + '" style="width:' + (s.frac * 100).toFixed(1) + '%"></div>' +
+        '<span class="cnt right">' + s.done + '/' + u.total + '</span></td>' +
+        '<td class="note' + (s.err ? " err" : "") + '">' + esc(s.note) + '</td></tr>';
+    }
+    dashEl.innerHTML = rows;
+
+    var visible = counts.running + counts.done + counts.failed;
+    var mins = Math.floor(Math.min(t, RUN_END) * 6); // cosmetic elapsed clock
+    clockEl.textContent = "my sweep · 1h" + (mins < 10 ? "0" : "") + mins + "m · " + visible + " units";
+    barEl.innerHTML =
+      '<b style="color:var(--done)">' + counts.done + " done</b> &nbsp; " +
+      '<b style="color:var(--running)">' + counts.running + " running</b> &nbsp; " +
+      '<b style="color:var(--failed)">' + counts.failed + " failed</b>";
+    manifestEl.classList.toggle("show", t >= RUN_END);
+  }
+
+  if (reduce) { render(RUN_END); return; }  // static finished board, no motion
+
+  var startMs = null, timer = null;
+  function frame(now) {
+    if (startMs === null) startMs = now;
+    var t = (now - startMs) / 1000;
+    if (t >= LOOP_END) { startMs = now; t = 0; }
+    render(t);
+    timer = requestAnimationFrame(frame);
+  }
+  function play() { if (timer === null) timer = requestAnimationFrame(frame); }
+  function stop() { if (timer !== null) { cancelAnimationFrame(timer); timer = null; } }
+
+  document.getElementById("demo-replay").addEventListener("click", function () { startMs = null; });
+  // pause when scrolled out of view (saves cycles); resume on return
+  if ("IntersectionObserver" in window) {
+    new IntersectionObserver(function (es) {
+      es[0].isIntersecting ? play() : stop();
+    }, { threshold: 0.15 }).observe(document.querySelector(".demo"));
+  } else { play(); }
+  render(0);
+})();
+</script>
+</body>
+</html>

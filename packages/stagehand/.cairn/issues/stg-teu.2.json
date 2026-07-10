@@ -1,0 +1,15 @@
+{
+  "assignee": "dtch1997@users.noreply.github.com",
+  "blocked_by": [],
+  "closed_at": "2026-07-02T14:31:37Z",
+  "created": "2026-07-02T14:12:55Z",
+  "description": "Fixes the idempotence principle (universal bug in the adherence review: eval outputs opened with mode 'w', silent overwrite of nondeterministic samples). Add step-level memoization to the Flow engine: cache key = hash(input artifact ids, params, step source code). On re-run, completed steps skip and return their persisted artifact \u2014 a crashed 200-job sweep resumes for free. Design points: (1) key MUST include the step's source hash or stale caches lie; (2) LLM-sampling steps get the honest semantics 're-run = replay persisted samples, refresh=True = new experiment'; (3) outputs stored via the artifacts service, which also enforces write-once persistence and closes the adoption gap. This makes stagehand a build system for experiments (cf. Make/Snakemake/Metaflow \u2014 content-keyed caching as core engine semantics, not framework bloat).\n\n## Acceptance criteria\nRe-running an identical Flow performs zero recomputation; changing a step's params or source re-runs that step and downstream only; refresh/cache=False opt-out exists; memoized outputs live in the artifacts service with lineage intact.\n\n## Notes\nImplemented on branch step-memo (stacked on run-manifest) \u2192 https://github.com/dtch1997/stagehand/pull/20 (v1.6.0, 126 tests pass). Key design: md5(fn source w/ closure recursion + static inputs + upstream result VALUES); JSON-only results; miss-never-wrong-hit; refresh=True re-records. Close on merge.",
+  "id": "stg-teu.2",
+  "labels": [],
+  "parent": "stg-teu",
+  "priority": 1,
+  "status": "closed",
+  "title": "Content-keyed step memoization on the artifacts service",
+  "type": "feature",
+  "updated": "2026-07-02T14:31:37Z"
+}

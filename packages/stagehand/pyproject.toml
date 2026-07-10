@@ -1,0 +1,21 @@
+[project]
+name = "stagehand"
+version = "2.0.0"
+description = "A declarative DAG engine for orchestrating steps at scale, with live monitoring: a file-backed progress monitor, a live HTML dashboard, a streaming per-task scheduler with fan-out/retry policies, type-checked graphs, coding-agent steps, content-addressed artifacts with lineage."
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+# The core (monitor + dashboard + engine) is pure stdlib — no runtime deps. Keeping
+# it dependency-free is deliberate: it drops into any experiment repo without dragging
+# a tree of transitive pins along with it.
+dependencies = []
+
+[dependency-groups]
+dev = ["pytest"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/stagehand"]
