@@ -1,12 +1,12 @@
 [project]
 name = "lobby"
-version = "0.2.0"
+version = "0.3.0"
 description = "One tunnel for all your local apps: a hub daemon that indexes and reverse-proxies cowrite/stagehand/databrowser-style servers behind a single public URL."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Daniel Tan" }]
-dependencies = ["marquee-serve @ git+https://github.com/dtch1997/marquee"]
+dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
@@ -20,6 +20,3 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/lobby"]
-
-[tool.hatch.metadata]
-allow-direct-references = true

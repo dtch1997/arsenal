@@ -262,7 +262,8 @@ class HubHandler(BaseHTTPRequestHandler):
         self._send(301, b"", "text/plain", {"Location": location})
 
 
-def run(port: int = state.DEFAULT_PORT, tunnel: bool = True) -> None:
+def run(port: int = state.DEFAULT_PORT, tunnel: bool = True,
+        provider: str = "cloudflare") -> None:
     """Run the hub in the foreground (the CLI's hidden `_daemon` command lands here)."""
     server = ThreadingHTTPServer(("127.0.0.1", port), HubHandler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -272,12 +273,12 @@ def run(port: int = state.DEFAULT_PORT, tunnel: bool = True) -> None:
     tunnel_stop = None
     if tunnel:
         try:
-            import marquee
+            from .tunnel import tunnel as open_tunnel
 
-            public, tunnel_stop = marquee.tunnel(port)
+            public, tunnel_stop = open_tunnel(port, provider=provider)
             public = public.rstrip("/")
             print(f"lobby: tunnel up at {public}", flush=True)
-        except Exception as e:  # missing marquee/cloudflared, tunnel timeout, ...
+        except Exception as e:  # missing tunnel binary, timeout, ...
             print(f"lobby: tunnel unavailable ({e!r}); serving locally only", flush=True)
 
     HubHandler.public_base = public

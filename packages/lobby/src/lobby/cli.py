@@ -32,7 +32,7 @@ def _cmd_status(args) -> int:
 
 
 def _cmd_up(args) -> int:
-    info = client.ensure_hub(tunnel=not args.no_tunnel)
+    info = client.ensure_hub(tunnel=not args.no_tunnel, provider=args.provider)
     print(info["url"])
     return 0
 
@@ -75,7 +75,7 @@ def _cmd_prune(args) -> int:
 
 
 def _cmd_daemon(args) -> int:
-    daemon.run(port=args.port, tunnel=not args.no_tunnel)
+    daemon.run(port=args.port, tunnel=not args.no_tunnel, provider=args.provider)
     return 0
 
 
@@ -87,6 +87,8 @@ def main(argv: list[str] | None = None) -> int:
 
     up = sub.add_parser("up", help="start the hub (if needed) and print its URL")
     up.add_argument("--no-tunnel", action="store_true")
+    up.add_argument("--provider", default=None,
+                    help="tunnel backend: cloudflare (default), localhost.run, ngrok")
     up.set_defaults(fn=_cmd_up)
 
     stop = sub.add_parser("stop", help="stop apps by name, or the hub itself")
@@ -102,6 +104,7 @@ def main(argv: list[str] | None = None) -> int:
     d = sub.add_parser("_daemon")  # internal: foreground hub, spawned by ensure_hub()
     d.add_argument("--port", type=int, default=state.DEFAULT_PORT)
     d.add_argument("--no-tunnel", action="store_true")
+    d.add_argument("--provider", default="cloudflare")
     d.set_defaults(fn=_cmd_daemon)
 
     args = p.parse_args(argv)

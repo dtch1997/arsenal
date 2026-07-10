@@ -60,13 +60,16 @@ lobby prune           # forget apps that are no longer running
   redirects from backends are rewritten back into the mount.
 - Liveness = pid check (when registered) + TCP probe. Dead apps stay on the
   index greyed out as "ended" until you `lobby prune`.
-- The tunnel comes from [marquee](https://github.com/dtch1997/marquee) (a
-  hard dependency, itself stdlib-only), default provider cloudflare quick
-  tunnels. No `cloudflared` binary? The hub still runs, local-only.
+- The tunnel is built in (`lobby.tunnel`, absorbed from the retired
+  [marquee](https://github.com/dtch1997/marquee) library): pluggable providers
+  behind one seam — cloudflare quick tunnels by default, `localhost.run` and
+  `ngrok` included, custom ones via `register_provider`. Pick with
+  `lobby up --provider …` or `LOBBY_PROVIDER`. No `cloudflared` binary?
+  The hub still runs, local-only.
 
 The hub URL is stable for the daemon's lifetime — one long-lived quick-tunnel
 URL instead of one per app. (A permanently-stable named tunnel would be a new
-marquee provider; the seam is there.)
+`lobby.tunnel` provider; the seam is there.)
 
 ## Install
 

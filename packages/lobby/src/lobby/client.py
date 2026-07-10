@@ -38,8 +38,14 @@ def _post(port: int, path: str, body: dict, timeout: float = 10.0) -> dict:
         return json.loads(r.read())
 
 
-def ensure_hub(*, hub_port: int | None = None, tunnel: bool = True, wait: float = 75.0) -> dict:
-    """Make sure the hub daemon is up (starting it detached if needed); return its ping info."""
+def ensure_hub(*, hub_port: int | None = None, tunnel: bool = True,
+               provider: str | None = None, wait: float = 75.0) -> dict:
+    """Make sure the hub daemon is up (starting it detached if needed); return its ping info.
+
+    `provider` picks the tunnel backend for a daemon started by this call
+    (default: $LOBBY_PROVIDER, else cloudflare); it has no effect on an
+    already-running hub.
+    """
     port = _hub_port(hub_port)
     if state.port_open(port) and _ping(port) is None:
         raise LobbyError(
@@ -55,6 +61,9 @@ def ensure_hub(*, hub_port: int | None = None, tunnel: bool = True, wait: float 
                 argv = [sys.executable, "-m", "lobby.cli", "_daemon", "--port", str(port)]
                 if not tunnel:
                     argv.append("--no-tunnel")
+                provider = provider or os.environ.get("LOBBY_PROVIDER")
+                if provider:
+                    argv += ["--provider", provider]
                 subprocess.Popen(argv, stdout=log, stderr=log, start_new_session=True)
         finally:
             fcntl.flock(lock, fcntl.LOCK_UN)
