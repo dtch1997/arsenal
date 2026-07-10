@@ -51,7 +51,7 @@ def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(
         prog="cowrite",
         description="Co-write a Markdown draft in the browser: side-by-side editor with "
-                    "save-to-disk round-trip, served over a Cloudflare quick tunnel.",
+                    "save-to-disk round-trip, served through the shared lobby hub.",
     )
     ap.add_argument("--version", action="version", version=f"cowrite {__version__}")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -62,7 +62,7 @@ def main(argv: list[str] | None = None) -> None:
     sp.add_argument("--title", help="title shown in the editor header")
     sp.add_argument("--port", type=int, help="local port (default: random free port)")
     sp.add_argument("--no-tunnel", action="store_true",
-                    help="serve on localhost only; skip the Cloudflare tunnel")
+                    help="serve on localhost only; skip the lobby hub / public URL")
     sp.set_defaults(func=_cmd_serve)
 
     lp = sub.add_parser("list", help="list active editors")

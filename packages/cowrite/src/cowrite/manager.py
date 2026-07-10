@@ -1,8 +1,9 @@
 """Lifecycle: start an editor (server + optional tunnel), list, stop, prune.
 
-Like report-viewer, the HTTP server and the `cloudflared` tunnel are launched
-**detached** (`start_new_session=True`) so they OUTLIVE the launching process —
-the human keeps editing after the CLI returns. State for each editor is recorded
+The HTTP server is launched **detached** (`start_new_session=True`) so it
+OUTLIVES the launching process — the human keeps editing after the CLI returns.
+The public URL comes from the shared lobby hub (github.com/dtch1997/lobby):
+one tunnel + one index page across every editor/dashboard. State for each editor is recorded
 per-slug under a user state dir so `list`/`stop` work across sessions, and
 teardown is explicit so nothing is orphaned silently.
 """
@@ -12,7 +13,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
 import signal
 import socket
 import subprocess
@@ -21,8 +21,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-URL_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
-URL_WAIT_SECS = 40
+import lobby
+
 MD_EXTS = (".md", ".markdown")
 
 
@@ -99,12 +99,6 @@ def _die(msg: str, code: int = 1) -> None:
     sys.exit(code)
 
 
-def _has_lobby() -> bool:
-    import importlib.util
-
-    return importlib.util.find_spec("lobby") is not None
-
-
 def _port_open(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(0.5)
@@ -133,10 +127,6 @@ def serve(path: str, slug: str | None = None, title: str | None = None,
         draft.parent.mkdir(parents=True, exist_ok=True)
         draft.write_text("", encoding="utf-8")
 
-    if not no_tunnel and not shutil.which("cloudflared") and not _has_lobby():
-        _die("neither the lobby library nor cloudflared found. Install one "
-             "(pip install git+https://github.com/dtch1997/lobby), or use --no-tunnel.")
-
     slug = _slugify(slug) if slug else _slugify(draft.stem)
     sd = state_dir()
     sd.mkdir(parents=True, exist_ok=True)
@@ -150,7 +140,6 @@ def serve(path: str, slug: str | None = None, title: str | None = None,
 
     port = port or _free_port()
     title = title or draft.stem
-    log_path = sd / f"{slug}.cloudflared.log"
     srv_log_path = sd / f"{slug}.http.log"
 
     # 1) The editor HTTP server, detached so it outlives this process.
@@ -161,7 +150,6 @@ def serve(path: str, slug: str | None = None, title: str | None = None,
         stdout=srv_log, stderr=subprocess.STDOUT, start_new_session=True,
     )
 
-    tunnel = None
     url = None
     if no_tunnel:
         # Local-only: wait until the server accepts connections.
@@ -189,51 +177,16 @@ def serve(path: str, slug: str | None = None, title: str | None = None,
             _kill(server)
             _die(f"server did not come up on port {port}.\n{_tail(srv_log_path)}")
 
-        # 2a) Preferred: register with the shared lobby hub — one tunnel + one
-        # index page across every editor/dashboard (github.com/dtch1997/lobby).
-        if _has_lobby():
-            import lobby
-
-            try:
-                full_url = lobby.serve(port, name=slug, kind="cowrite", title=title,
-                                       pid=server.pid, cwd=str(draft.parent))
-                url = full_url.rstrip("/")
-            except Exception as e:
-                print(f"cowrite: lobby hub unavailable ({e}); falling back to cloudflared",
-                      file=sys.stderr)
-                if not shutil.which("cloudflared"):
-                    _kill(server)
-                    _die("lobby hub failed and cloudflared not found on PATH.")
-
-    if not no_tunnel and url is None:
-        # 2b) Fallback: per-editor Cloudflare quick tunnel, detached likewise.
-        # URL parsed from its log.
-        log = open(log_path, "wb")
-        tunnel = subprocess.Popen(
-            ["cloudflared", "tunnel", "--no-autoupdate", "--url", f"http://127.0.0.1:{port}"],
-            stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
-        )
-        deadline = time.time() + URL_WAIT_SECS
-        while time.time() < deadline:
-            if tunnel.poll() is not None or server.poll() is not None:
-                break
-            try:
-                m = URL_RE.search(log_path.read_text(errors="replace"))
-            except Exception:
-                m = None
-            if m:
-                url = m.group(0)
-                break
-            time.sleep(0.5)
-        if not url:
-            _kill(tunnel)
+        # 2) Register with the shared lobby hub — one tunnel + one index page
+        # across every editor/dashboard (github.com/dtch1997/lobby).
+        try:
+            full_url = lobby.serve(port, name=slug, kind="cowrite", title=title,
+                                   pid=server.pid, cwd=str(draft.parent))
+            url = full_url.rstrip("/")
+        except Exception as e:
             _kill(server)
-            _die(
-                f"tunnel did not produce a URL within {URL_WAIT_SECS}s.\n"
-                f"--- cloudflared log tail ---\n{_tail(log_path)}\n"
-                f"--- http server log tail ---\n{_tail(srv_log_path, 400)}"
-            )
-        full_url = url + "/"
+            _die(f"lobby hub unavailable: {e}\n"
+                 f"  (see `lobby status`, or use --no-tunnel for local editing)")
 
     st = {
         "slug": slug,
@@ -241,11 +194,10 @@ def serve(path: str, slug: str | None = None, title: str | None = None,
         "full_url": full_url,
         "port": port,
         "server_pid": server.pid,
-        "tunnel_pid": (tunnel.pid if tunnel else None),
+        "tunnel_pid": None,  # tunnelling is owned by the lobby hub daemon
         "source": str(draft),
         "title": title,
         "started_at": _now(),
-        "cloudflared_log": (str(log_path) if tunnel else None),
     }
     _state_path(slug).write_text(json.dumps(st, indent=2))
     return st
@@ -289,13 +241,10 @@ def _teardown(st: dict) -> None:
         sd = state_dir()
         for p in (_state_path(slug), sd / f"{slug}.cloudflared.log", sd / f"{slug}.http.log"):
             p.unlink(missing_ok=True)
-        if _has_lobby():
-            import lobby
-
-            try:
-                lobby.unregister(slug)
-            except Exception:
-                pass  # hub gone or never registered — nothing to clean
+        try:
+            lobby.unregister(slug)
+        except Exception:
+            pass  # hub gone or never registered — nothing to clean
 
 
 def prune() -> list[str]:
