@@ -2,8 +2,10 @@
 
 A minimal library for browsing JSONL data in the browser. Give it records, it
 **validates they share one schema**, builds a self-contained static HTML browser
-(sidebar list + full-entry pane), and serves it over a **Cloudflare quick
-tunnel** so you can open it from anywhere.
+(sidebar list + full-entry pane), and serves it through the shared
+**[lobby](https://github.com/dtch1997/lobby) hub** — one tunnel + one index
+page across all your browsers/reports/dashboards — so you can open it from
+anywhere.
 
 - **Sidebar + main pane** — scroll/`j`/`k` through entries on the left, see the
   selected entry in full on the right.
@@ -21,7 +23,7 @@ tunnel** so you can open it from anywhere.
 pip install -e .          # from this directory
 ```
 
-Serving over a tunnel needs the `cloudflared` binary on `PATH`; without it,
+Public URLs need the `cloudflared` binary on `PATH` (used by the lobby hub); without it,
 `serve()` falls back to a local URL.
 
 ## Library
@@ -35,9 +37,9 @@ viewer = databrowser.serve(
     filter_fields=["model", "split", "score"],   # model/split → categorical, score → continuous
     title="eval results",
 )
-print(viewer.url)        # https://<...>.trycloudflare.com
+print(viewer.url)        # https://<hub>.trycloudflare.com/a/<name>/
 # ... browse ...
-viewer.stop()            # tear down server + tunnel
+viewer.stop()            # tear down server + hub registration
 ```
 
 Force a field's kind, or just build the static site without serving:
@@ -74,7 +76,7 @@ databrowser build results.jsonl --out site/ --filter model
 
 | | |
 |---|---|
-| `serve(data, *, filter_fields=None, title=None, strict=True, out_dir=None, port=None, tunnel=True) -> Viewer` | build + serve; `Viewer.url`, `Viewer.alive`, `Viewer.stop()` |
+| `serve(data, *, filter_fields=None, title=None, name=None, strict=True, out_dir=None, port=None, tunnel=True) -> Viewer` | build + serve; `Viewer.url`, `Viewer.alive`, `Viewer.stop()` |
 | `build(data, out_dir, *, filter_fields=None, title=None, strict=True) -> Path` | build the static site only |
 | `validate_schema(records, *, strict=True) -> list[str]` | check shared schema; returns field order |
 | `FilterField(name, kind=None)` | force a filter field's kind |

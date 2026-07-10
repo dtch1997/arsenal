@@ -6,17 +6,15 @@ explicit :meth:`Viewer.stop`. This mirrors the report-viewer service model —
 start it, get a URL, keep browsing.
 
 The public URL comes from the shared `lobby <https://github.com/dtch1997/lobby>`_
-hub when that library is installed (one tunnel + one index page across every
-browser/report/dashboard), falling back to a detached per-browser Cloudflare
-quick tunnel otherwise. If neither is available the local URL is returned
-instead (and a note is printed), so the tool still works for local viewing.
+hub (a hard dependency): one tunnel + one index page across every
+browser/report/dashboard. If the hub can't be reached the local URL is
+returned instead (and a note is printed), so the tool still works for local
+viewing; ``tunnel=False`` skips the hub entirely.
 """
 
 from __future__ import annotations
 
 import os
-import re
-import shutil
 import signal
 import socket
 import subprocess
@@ -28,10 +26,6 @@ from pathlib import Path
 from typing import Iterable, Sequence, Union
 
 from .core import FilterSpec, build
-
-_URL_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
-_URL_WAIT_SECS = 40
-
 
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -145,59 +139,23 @@ def serve(
         http_proc.terminate()
         raise RuntimeError(f"local HTTP server failed to start on port {port}")
 
-    if tunnel:
-        # Preferred: register with the shared lobby hub — one tunnel + one
-        # index page across every browser/report/dashboard.
-        try:
-            import lobby
-        except ModuleNotFoundError:
-            pass
-        else:
-            try:
-                public_url = lobby.serve(
-                    port, name=name or title or f"databrowser-{port}",
-                    kind="databrowser", title=title, pid=http_proc.pid, cwd=str(out),
-                )
-                # The hub may have uniquified the slug; recover it from the URL.
-                hub_name = public_url.rstrip("/").rsplit("/a/", 1)[-1]
-                return Viewer(url=public_url, local_url=local_url, out_dir=out,
-                              http_pid=http_proc.pid, hub_name=hub_name)
-            except Exception as e:
-                print(f"note: lobby hub unavailable ({e}); falling back to cloudflared.",
-                      file=sys.stderr)
-
-    if not tunnel or not shutil.which("cloudflared"):
-        if tunnel:
-            print("note: cloudflared not found on PATH; serving locally only.", file=sys.stderr)
+    if not tunnel:
         return Viewer(url=local_url, local_url=local_url, out_dir=out, http_pid=http_proc.pid)
 
-    log_path = out / "cloudflared.log"
-    with log_path.open("w") as log:
-        tunnel_proc = subprocess.Popen(
-            ["cloudflared", "tunnel", "--url", local_url, "--no-autoupdate"],
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
+    # Register with the shared lobby hub — one tunnel + one index page across
+    # every browser/report/dashboard. (Without cloudflared the hub itself
+    # degrades to a local-only URL, so this still works for local viewing.)
+    import lobby
+
+    try:
+        public_url = lobby.serve(
+            port, name=name or title or f"databrowser-{port}",
+            kind="databrowser", title=title, pid=http_proc.pid, cwd=str(out),
         )
-
-    deadline = time.time() + _URL_WAIT_SECS
-    public_url = None
-    while time.time() < deadline:
-        if log_path.exists():
-            m = _URL_RE.search(log_path.read_text(errors="ignore"))
-            if m:
-                public_url = m.group(0)
-                break
-        time.sleep(0.4)
-
-    if not public_url:
-        print("note: tunnel URL did not appear in time; returning local URL.", file=sys.stderr)
-        public_url = local_url
-
-    return Viewer(
-        url=public_url,
-        local_url=local_url,
-        out_dir=out,
-        http_pid=http_proc.pid,
-        tunnel_pid=tunnel_proc.pid,
-    )
+    except Exception as e:
+        print(f"note: lobby hub unavailable ({e}); serving locally only.", file=sys.stderr)
+        return Viewer(url=local_url, local_url=local_url, out_dir=out, http_pid=http_proc.pid)
+    # The hub may have uniquified the slug; recover it from the URL.
+    hub_name = public_url.rstrip("/").rsplit("/a/", 1)[-1]
+    return Viewer(url=public_url, local_url=local_url, out_dir=out,
+                  http_pid=http_proc.pid, hub_name=hub_name)
