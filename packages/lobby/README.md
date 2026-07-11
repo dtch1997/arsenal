@@ -49,6 +49,40 @@ lobby stop <name> | --all | --hub
 lobby prune           # forget apps that are no longer running
 ```
 
+## Wiki (persistent, cloud-hosted)
+
+The hub is ephemeral by design — its URL changes on every restart and apps die
+with their processes. For write-ups that should stay up, `lobby.wiki` is the
+opposite: a tiny wiki server on a cheap always-on RunPod CPU pod (~$0.03/hr)
+with a **stable public URL**. The content model is a plain directory tree that
+you pull, edit arbitrarily, and push back — no git, no build step, no GitHub
+Pages.
+
+```python
+from lobby import wiki
+
+w = await wiki.server()                  # find-or-create (needs RUNPOD_API_KEY)
+tree = await w.pull()                    # whole tree -> ~/.lobby/wiki/wiki/
+(tree / "report.md").write_text("# hi")
+await w.push()                           # tree -> server, atomic total replace
+await w.add("results-site/")             # sugar: pull + copy in + push
+await w.rm("report.md"); await w.ls(); await w.status()
+await w.stop()                           # halt the pod; destroy() terminates it
+```
+
+- `server(name)` is find-or-create: the locally recorded pod, else any RunPod
+  pod named `lobby-wiki-<name>` (a second machine adopts an existing wiki —
+  the write token is recovered from the pod env), else a fresh pod. Different
+  names are fully independent wikis.
+- The server renders the tree browsably: `.md` files become pages (`?raw` for
+  the source), directories serve their `index.html`/`index.md` or a generated
+  listing, everything else is served as bytes. Dotfiles are hidden.
+- Reads are public (it's for public-facing docs); pushes need the bearer
+  token (kept in `~/.lobby/wiki/<name>.json`).
+- The local mirror (`~/.lobby/wiki/<name>/`) is the durable copy — RunPod CPU
+  pods have no persistent volume, so after a pod restart or recreate, `push()`
+  restores the tree. The proxy URL is stable for the pod's lifetime.
+
 ## How it works
 
 - The hub is a stdlib `ThreadingHTTPServer` on a fixed local port
