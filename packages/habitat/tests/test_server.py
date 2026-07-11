@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import json
 import os
 import socket
@@ -103,7 +104,9 @@ def test_habit_lifecycle(base):
     assert r["done"] is True
     s, _ = req(base + "/api/summary", token=TOKEN)
     h = next(x for x in s["habits"] if x["id"] == hid)
-    assert h["done_today"] and h["total"] == 6 and h["week"][-1] is True
+    weekday = datetime.date.fromisoformat(s["today"]).weekday()
+    assert s["week_days"][weekday] == s["today"] and len(s["week_days"]) == 7
+    assert h["done_today"] and h["total"] == 6 and h["week"][weekday] is True
     assert h["days_since"] == 0 and s["wins_week"] >= 1
 
     r, _ = req(base + "/api/toggle", {"habit_id": hid, "day": s["today"]}, TOKEN)

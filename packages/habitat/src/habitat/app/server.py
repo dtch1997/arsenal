@@ -110,17 +110,14 @@ def habit_row(r: sqlite3.Row) -> dict:
 
 # -- stats ------------------------------------------------------------------
 
-def week_days(end_day: str, n: int = 7) -> list[str]:
-    end = datetime.fromisoformat(end_day).date()
-    return [(end - timedelta(days=i)).isoformat() for i in range(n - 1, -1, -1)]
-
-
 def summary(conn: sqlite3.Connection) -> dict:
     now_day = today()
-    last7 = week_days(now_day)
     month_prefix = now_day[:7]
-    monday = (datetime.fromisoformat(now_day).date()
-              - timedelta(days=datetime.fromisoformat(now_day).date().weekday())).isoformat()
+    monday_date = (datetime.fromisoformat(now_day).date()
+                   - timedelta(days=datetime.fromisoformat(now_day).date().weekday()))
+    monday = monday_date.isoformat()
+    # the current calendar week, Mon..Sun (may extend past today)
+    last7 = [(monday_date + timedelta(days=i)).isoformat() for i in range(7)]
     habits = []
     for r in conn.execute("SELECT * FROM habits WHERE archived_at IS NULL ORDER BY sort_order, id"):
         h = habit_row(r)

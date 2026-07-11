@@ -42,32 +42,41 @@ button { font: inherit; color: inherit; background: none; border: none; padding:
 .wins { color: var(--ink-2); font-size: .85rem; margin-bottom: 1.1rem; }
 .wins b { color: var(--good); font-weight: 650; }
 
-.card {
+.grid {
   background: var(--surface); border: 1px solid var(--ring); border-radius: 14px;
-  padding: .8rem .9rem; margin-bottom: .6rem;
-  display: flex; align-items: center; gap: .8rem;
+  padding: .35rem .5rem .5rem;
+  display: grid; grid-template-columns: minmax(0, 1fr) repeat(7, minmax(30px, 34px));
+  align-items: center;
 }
-.card .body { flex: 1; min-width: 0; }
-.card .name { font-weight: 600; display: flex; align-items: baseline; gap: .45rem; }
-.card .name .em { font-size: 1.05rem; }
-.card .sub { color: var(--muted); font-size: .8rem; margin-top: .1rem; }
-.card .sub .fresh { color: var(--good); font-weight: 550; }
-.dots { display: flex; gap: 4px; margin-top: .45rem; }
-.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--grid); }
-.dot.on { background: var(--accent); }
-.dot.today { box-shadow: 0 0 0 1.5px var(--line); }
-.dot.today.on { box-shadow: none; }
-
-.check {
-  flex: none; width: 46px; height: 46px; border-radius: 50%;
-  border: 2px solid var(--line); color: transparent;
-  font-size: 1.3rem; line-height: 1; transition: transform .12s, background .12s;
+.grid .dhead { text-align: center; color: var(--muted); font-size: .62rem;
+               line-height: 1.15; padding: .35rem 0 .25rem; }
+.grid .dhead b { display: block; font-size: .72rem; color: var(--ink-2); font-weight: 600; }
+.grid .dhead.today, .grid .dhead.today b { color: var(--accent); }
+.grid .rowname {
+  min-width: 0; padding: .3rem .4rem .3rem .2rem; border-top: 1px solid var(--grid);
+  align-self: stretch; display: flex; flex-direction: column; justify-content: center;
+}
+.grid .rowname .nm { font-size: .82rem; font-weight: 600; line-height: 1.2;
+                     display: -webkit-box; -webkit-line-clamp: 2;
+                     -webkit-box-orient: vertical; overflow: hidden; }
+.grid .rowname .st { color: var(--muted); font-size: .68rem; }
+.grid .rowname .st.fresh { color: var(--good); }
+.grid .cellbtn {
+  border-top: 1px solid var(--grid); align-self: stretch;
+  display: flex; align-items: center; justify-content: center; padding: .3rem 0;
+}
+.circ {
+  width: 24px; height: 24px; border-radius: 50%;
+  border: 1.5px solid var(--line); color: transparent; font-size: .8rem; line-height: 1;
   display: flex; align-items: center; justify-content: center;
+  transition: transform .12s, background .12s;
 }
-.check.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
-.check:active { transform: scale(0.88); }
-.check.pop { animation: pop .3s; }
-@keyframes pop { 40% { transform: scale(1.18); } }
+.cellbtn:active .circ { transform: scale(0.85); }
+.circ.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.circ.today { border-color: var(--accent); border-width: 2px; }
+.circ.today.on { border-color: var(--accent); }
+.cellbtn.future { pointer-events: none; }
+.cellbtn.future .circ { border-style: dotted; opacity: .45; }
 
 .fab {
   position: fixed; right: max(env(safe-area-inset-right), 1rem);
@@ -181,9 +190,9 @@ const CHEERS = ["Nice!", "Logged ✨", "Another one!", "Keep collecting 🏆", "
 
 function agoLabel(h) {
   if (h.done_today) return { text: "done today ✓", fresh: true };
-  if (h.days_since === null) return { text: "no entries yet — today could be the first", fresh: false };
-  if (h.days_since === 1) return { text: "last done yesterday", fresh: true };
-  return { text: `last done ${h.days_since} days ago`, fresh: h.days_since <= 3 };
+  if (h.days_since === null) return { text: "not yet — no rush", fresh: false };
+  if (h.days_since === 1) return { text: "yesterday", fresh: true };
+  return { text: `${h.days_since}d ago`, fresh: h.days_since <= 3 };
 }
 
 // -- today view --------------------------------------------------------------
@@ -192,36 +201,41 @@ function renderHome() {
   const s = SUMMARY;
   const d = new Date(s.today + "T12:00:00");
   const dateLabel = d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
-  const cards = s.habits.map(h => {
+  const head = ['<span></span>'].concat(s.week_days.map(day => {
+    const dd = new Date(day + "T12:00:00");
+    const letter = dd.toLocaleDateString(undefined, { weekday: "narrow" });
+    return `<span class="dhead${day === s.today ? " today" : ""}">${esc(letter)}<b>${dd.getDate()}</b></span>`;
+  })).join("");
+  const rows = s.habits.map(h => {
     const ago = agoLabel(h);
-    const dots = s.week_days.map((day, i) => {
-      const cls = "dot" + (h.week[i] ? " on" : "") + (i === 6 ? " today" : "");
-      return `<span class="${cls}" title="${day}"></span>`;
+    const cells = s.week_days.map((day, i) => {
+      const future = day > s.today;
+      const on = h.week[i];
+      const circ = "circ" + (on ? " on" : "") + (day === s.today ? " today" : "");
+      return `<button class="cellbtn${future ? " future" : ""}" ${future ? "disabled" : ""}
+        aria-label="${esc(h.name)} ${day}" onclick="toggleCell(${h.id}, '${day}', this)">
+        <span class="${circ}">✓</span></button>`;
     }).join("");
-    return `<div class="card">
-      <div class="body" onclick="location.hash='#/habit/${h.id}'">
-        <div class="name"><span class="em">${esc(h.emoji)}</span>${esc(h.name)}</div>
-        <div class="sub"><span class="${ago.fresh ? "fresh" : ""}">${esc(ago.text)}</span>
-          · ${h.count_30d}× in 30 days</div>
-        <div class="dots">${dots}</div>
-      </div>
-      <button class="check${h.done_today ? " on" : ""}" aria-label="toggle today"
-        onclick="toggleToday(${h.id}, this)">✓</button>
-    </div>`;
+    return `<div class="rowname" onclick="location.hash='#/habit/${h.id}'">
+        <span class="nm">${esc(h.emoji)} ${esc(h.name)}</span>
+        <span class="st${ago.fresh ? " fresh" : ""}">${esc(ago.text)}</span>
+      </div>${cells}`;
   }).join("");
   app.innerHTML = `
     <div class="topbar"><h1>habitat</h1><span class="date">${esc(dateLabel)}</span></div>
     <div class="wins">🏆 <b>${s.wins_week}</b> this week · <b>${s.wins_month}</b> this month
       · <b>${s.wins_all}</b> all-time</div>
-    ${cards || '<div class="empty">No habits yet — add your first with the + button.</div>'}
+    ${s.habits.length
+      ? `<div class="grid">${head}${rows}</div>`
+      : '<div class="empty">No habits yet — add your first with the + button.</div>'}
     ${s.archived ? `<a class="archived-link" href="#/archived">${s.archived} archived</a>` : ""}
     <button class="fab" aria-label="add habit" onclick="location.hash='#/new'">+</button>`;
 }
 
-async function toggleToday(id, btn) {
+async function toggleCell(id, day, btn) {
   btn.disabled = true;
   try {
-    const r = await api("/api/toggle", { habit_id: id, day: SUMMARY.today });
+    const r = await api("/api/toggle", { habit_id: id, day });
     SUMMARY = await api("/api/summary");
     renderHome();
     if (r.done) {
