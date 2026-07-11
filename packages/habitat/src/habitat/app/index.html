@@ -1,0 +1,418 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<title>habitat</title>
+<style>
+:root {
+  --page: #f9f9f7; --surface: #fcfcfb;
+  --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+  --grid: #e1e0d9; --line: #c3c2b7;
+  --accent: #2a78d6; --accent-ink: #fff; --good: #006300;
+  --ring: rgba(11,11,11,0.10);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page: #0d0d0d; --surface: #1a1a19;
+    --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --line: #383835;
+    --accent: #3987e5; --accent-ink: #fff; --good: #0ca30c;
+    --ring: rgba(255,255,255,0.10);
+  }
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html { background: var(--page); }
+body {
+  margin: 0 auto; max-width: 30rem; min-height: 100vh;
+  padding: max(env(safe-area-inset-top), 1rem) 1rem calc(env(safe-area-inset-bottom) + 5rem);
+  background: var(--page); color: var(--ink);
+  font: 16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+h1 { font-size: 1.25rem; margin: 0; letter-spacing: -0.01em; }
+a { color: var(--accent); text-decoration: none; }
+button { font: inherit; color: inherit; background: none; border: none; padding: 0; cursor: pointer; }
+
+.topbar { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: .35rem; }
+.topbar .date { color: var(--muted); font-size: .85rem; }
+.wins { color: var(--ink-2); font-size: .85rem; margin-bottom: 1.1rem; }
+.wins b { color: var(--good); font-weight: 650; }
+
+.card {
+  background: var(--surface); border: 1px solid var(--ring); border-radius: 14px;
+  padding: .8rem .9rem; margin-bottom: .6rem;
+  display: flex; align-items: center; gap: .8rem;
+}
+.card .body { flex: 1; min-width: 0; }
+.card .name { font-weight: 600; display: flex; align-items: baseline; gap: .45rem; }
+.card .name .em { font-size: 1.05rem; }
+.card .sub { color: var(--muted); font-size: .8rem; margin-top: .1rem; }
+.card .sub .fresh { color: var(--good); font-weight: 550; }
+.dots { display: flex; gap: 4px; margin-top: .45rem; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--grid); }
+.dot.on { background: var(--accent); }
+.dot.today { box-shadow: 0 0 0 1.5px var(--line); }
+.dot.today.on { box-shadow: none; }
+
+.check {
+  flex: none; width: 46px; height: 46px; border-radius: 50%;
+  border: 2px solid var(--line); color: transparent;
+  font-size: 1.3rem; line-height: 1; transition: transform .12s, background .12s;
+  display: flex; align-items: center; justify-content: center;
+}
+.check.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.check:active { transform: scale(0.88); }
+.check.pop { animation: pop .3s; }
+@keyframes pop { 40% { transform: scale(1.18); } }
+
+.fab {
+  position: fixed; right: max(env(safe-area-inset-right), 1rem);
+  bottom: calc(env(safe-area-inset-bottom) + 1rem);
+  width: 54px; height: 54px; border-radius: 50%;
+  background: var(--accent); color: var(--accent-ink);
+  font-size: 1.7rem; line-height: 1; box-shadow: 0 3px 10px rgba(0,0,0,.22);
+  display: flex; align-items: center; justify-content: center;
+}
+.toast {
+  position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: calc(env(safe-area-inset-bottom) + 5.4rem);
+  background: var(--ink); color: var(--page);
+  border-radius: 999px; padding: .45rem 1rem; font-size: .85rem;
+  opacity: 0; pointer-events: none; transition: opacity .25s; white-space: nowrap;
+}
+.toast.show { opacity: 1; }
+
+.crumb { font-size: .85rem; margin-bottom: 1rem; display: inline-block; color: var(--muted); }
+.detail h1 { display: flex; align-items: baseline; gap: .5rem; }
+.detail .desc { color: var(--ink-2); font-size: .9rem; margin: .35rem 0 0; white-space: pre-wrap; }
+.detail .cadence { color: var(--muted); font-size: .8rem; margin-top: .2rem; }
+
+.tiles { display: flex; gap: .6rem; margin: 1.1rem 0; }
+.tile {
+  flex: 1; background: var(--surface); border: 1px solid var(--ring);
+  border-radius: 12px; padding: .6rem .7rem;
+}
+.tile .v { font-size: 1.45rem; font-weight: 650; letter-spacing: -0.01em; }
+.tile .k { color: var(--muted); font-size: .72rem; margin-top: .05rem; }
+.tile .n { color: var(--muted); font-size: .68rem; }
+
+.heatwrap {
+  background: var(--surface); border: 1px solid var(--ring); border-radius: 12px;
+  padding: .8rem .6rem .6rem; overflow-x: auto; scrollbar-width: thin;
+}
+.heat { display: flex; gap: 2px; width: max-content; padding-right: .2rem; }
+.heat .col { display: flex; flex-direction: column; gap: 2px; }
+.heat .mlabel { height: 14px; font-size: .62rem; color: var(--muted); white-space: nowrap; }
+.cell { width: 14px; height: 14px; border-radius: 3px; background: var(--grid); }
+.cell.on { background: var(--accent); }
+.cell.future { background: transparent; }
+.cell.today { outline: 1.5px solid var(--ink-2); outline-offset: -1.5px; }
+.cell.tappable { cursor: pointer; }
+.heathint { color: var(--muted); font-size: .72rem; margin-top: .5rem; }
+
+.row-actions { display: flex; gap: 1.2rem; margin-top: 1.2rem; font-size: .88rem; }
+.danger { color: var(--muted); }
+
+form.edit label { display: block; font-size: .8rem; color: var(--ink-2); margin: .9rem 0 .25rem; }
+form.edit input, form.edit textarea {
+  width: 100%; font: inherit; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  padding: .55rem .7rem;
+}
+form.edit textarea { min-height: 5.5rem; resize: vertical; }
+.btn {
+  display: inline-block; background: var(--accent); color: var(--accent-ink);
+  border-radius: 999px; padding: .55rem 1.3rem; font-weight: 600; margin-top: 1.2rem;
+}
+.btn.ghost { background: none; color: var(--ink-2); }
+
+.login { text-align: center; padding-top: 22vh; }
+.login .big { font-size: 2.6rem; }
+.login input {
+  width: 100%; max-width: 18rem; font: inherit; text-align: center; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  padding: .6rem .8rem; margin-top: 1rem;
+}
+.login .err { color: #d03b3b; font-size: .85rem; min-height: 1.2rem; margin-top: .5rem; }
+.section { color: var(--muted); font-size: .78rem; text-transform: uppercase;
+           letter-spacing: .06em; margin: 1.4rem 0 .55rem; }
+.archived-link { color: var(--muted); font-size: .82rem; display: inline-block; margin-top: .8rem; }
+.empty { color: var(--muted); text-align: center; padding: 3rem 0; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div class="toast" id="toast"></div>
+<script>
+"use strict";
+const $ = (s, el) => (el || document).querySelector(s);
+const app = $("#app");
+let SUMMARY = null;
+
+async function api(path, body) {
+  const res = await fetch(path, body === undefined ? {} : {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (res.status === 401) { renderLogin(); throw new Error("unauthed"); }
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || res.status);
+  return data;
+}
+
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g,
+    c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function toast(msg) {
+  const t = $("#toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(t._h);
+  t._h = setTimeout(() => t.classList.remove("show"), 1800);
+}
+
+const CHEERS = ["Nice!", "Logged ✨", "Another one!", "Keep collecting 🏆", "Love to see it"];
+
+function agoLabel(h) {
+  if (h.done_today) return { text: "done today ✓", fresh: true };
+  if (h.days_since === null) return { text: "no entries yet — today could be the first", fresh: false };
+  if (h.days_since === 1) return { text: "last done yesterday", fresh: true };
+  return { text: `last done ${h.days_since} days ago`, fresh: h.days_since <= 3 };
+}
+
+// -- today view --------------------------------------------------------------
+
+function renderHome() {
+  const s = SUMMARY;
+  const d = new Date(s.today + "T12:00:00");
+  const dateLabel = d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
+  const cards = s.habits.map(h => {
+    const ago = agoLabel(h);
+    const dots = s.week_days.map((day, i) => {
+      const cls = "dot" + (h.week[i] ? " on" : "") + (i === 6 ? " today" : "");
+      return `<span class="${cls}" title="${day}"></span>`;
+    }).join("");
+    return `<div class="card">
+      <div class="body" onclick="location.hash='#/habit/${h.id}'">
+        <div class="name"><span class="em">${esc(h.emoji)}</span>${esc(h.name)}</div>
+        <div class="sub"><span class="${ago.fresh ? "fresh" : ""}">${esc(ago.text)}</span>
+          · ${h.count_30d}× in 30 days</div>
+        <div class="dots">${dots}</div>
+      </div>
+      <button class="check${h.done_today ? " on" : ""}" aria-label="toggle today"
+        onclick="toggleToday(${h.id}, this)">✓</button>
+    </div>`;
+  }).join("");
+  app.innerHTML = `
+    <div class="topbar"><h1>habitat</h1><span class="date">${esc(dateLabel)}</span></div>
+    <div class="wins">🏆 <b>${s.wins_week}</b> this week · <b>${s.wins_month}</b> this month
+      · <b>${s.wins_all}</b> all-time</div>
+    ${cards || '<div class="empty">No habits yet — add your first with the + button.</div>'}
+    ${s.archived ? `<a class="archived-link" href="#/archived">${s.archived} archived</a>` : ""}
+    <button class="fab" aria-label="add habit" onclick="location.hash='#/new'">+</button>`;
+}
+
+async function toggleToday(id, btn) {
+  btn.disabled = true;
+  try {
+    const r = await api("/api/toggle", { habit_id: id, day: SUMMARY.today });
+    SUMMARY = await api("/api/summary");
+    renderHome();
+    if (r.done) {
+      const h = SUMMARY.habits.find(x => x.id === id);
+      const cheer = CHEERS[(h ? h.total : 1) % CHEERS.length];
+      toast(`${cheer} ${h ? `#${h.total} all-time` : ""}`);
+    }
+  } catch (e) { if (e.message !== "unauthed") toast("Hmm, that didn't save"); }
+}
+
+// -- habit detail -------------------------------------------------------------
+
+function heatmapHTML(h, weeks) {
+  const done = new Set(h.days);
+  const today = new Date(h.today + "T12:00:00");
+  const start = new Date(today);
+  const sinceMonday = (start.getDay() + 6) % 7;
+  start.setDate(start.getDate() - sinceMonday - (weeks - 1) * 7); // a Monday
+  const earliest = new Date(today);
+  earliest.setDate(earliest.getDate() - h.backfill_days);
+  const cols = [];
+  let lastMonth = "";
+  for (let w = 0; w < weeks; w++) {
+    const cells = [];
+    let label = "";
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(start);
+      d.setDate(d.getDate() + w * 7 + i);
+      const iso = d.toISOString().slice(0, 10);
+      if (i === 0) {
+        const m = d.toLocaleDateString(undefined, { month: "short" });
+        if (m !== lastMonth) { label = m; lastMonth = m; }
+      }
+      let cls = "cell";
+      if (d > today) cls += " future";
+      else {
+        if (done.has(iso)) cls += " on";
+        if (iso === h.today) cls += " today";
+        if (d >= earliest) cls += " tappable";
+      }
+      const tap = (d <= today && d >= earliest)
+        ? ` onclick="toggleDay(${h.id}, '${iso}')"` : "";
+      cells.push(`<span class="${cls}" title="${iso}"${tap}></span>`);
+    }
+    cols.push(`<div class="col"><span class="mlabel">${label}</span>${cells.join("")}</div>`);
+  }
+  return `<div class="heatwrap" id="heatwrap"><div class="heat">${cols.join("")}</div></div>
+    <div class="heathint">tap a recent day to log or unlog it (last ${h.backfill_days} days)</div>`;
+}
+
+async function renderHabit(id) {
+  const h = await api(`/api/habit/${id}`);
+  const best = h.best_month ? String(h.best_month[1]) : "—";
+  const bestLabel = h.best_month
+    ? `best month · ${monthName(h.best_month[0])}` : "best month";
+  const legacy = h.legacy_count
+    ? `<div class="n">incl. ${h.legacy_count} from the Todoist era</div>` : "";
+  app.innerHTML = `
+    <a class="crumb" href="#/">← all habits</a>
+    <div class="detail">
+      <h1><span>${esc(h.emoji)}</span>${esc(h.name)}</h1>
+      ${h.description ? `<p class="desc">${esc(h.description)}</p>` : ""}
+      ${h.cadence ? `<div class="cadence">aim: ${esc(h.cadence)}</div>` : ""}
+      <div class="tiles">
+        <div class="tile"><div class="v">${h.total}</div><div class="k">all-time</div>${legacy}</div>
+        <div class="tile"><div class="v">${h.count_month}</div><div class="k">this month</div></div>
+        <div class="tile"><div class="v">${esc(best)}</div><div class="k">${esc(bestLabel)}</div></div>
+      </div>
+      ${heatmapHTML(h, 26)}
+      <div class="row-actions">
+        <a href="#/edit/${h.id}">edit</a>
+        <button class="danger" onclick="archive(${h.id}, ${h.archived_at ? "false" : "true"})">
+          ${h.archived_at ? "unarchive" : "archive"}</button>
+      </div>
+    </div>`;
+  const wrap = $("#heatwrap");
+  wrap.scrollLeft = wrap.scrollWidth;
+}
+
+function monthName(ym) {
+  return new Date(ym + "-15T12:00:00").toLocaleDateString(undefined,
+    { month: "short", year: "numeric" });
+}
+
+async function toggleDay(id, day) {
+  try {
+    const r = await api("/api/toggle", { habit_id: id, day });
+    if (r.done) toast(`Logged for ${day} ✨`);
+    renderHabit(id);
+  } catch (e) { if (e.message !== "unauthed") toast(e.message); }
+}
+
+async function archive(id, on) {
+  if (on && !confirm("Archive this habit? Its history is kept and it can be unarchived.")) return;
+  await api(`/api/habits/${id}`, { archive: on });
+  location.hash = "#/";
+}
+
+// -- archived list -------------------------------------------------------------
+
+async function renderArchived() {
+  const items = await api("/api/archived");
+  const rows = items.habits.map(h => `<div class="card">
+      <div class="body" onclick="location.hash='#/habit/${h.id}'">
+        <div class="name"><span class="em">${esc(h.emoji)}</span>${esc(h.name)}</div>
+        <div class="sub">${h.total}× all-time</div>
+      </div>
+      <button onclick="archive(${h.id}, false)" style="color:var(--accent);font-size:.85rem">unarchive</button>
+    </div>`).join("");
+  app.innerHTML = `<a class="crumb" href="#/">← all habits</a>
+    <div class="section">Archived</div>
+    ${rows || '<div class="empty">Nothing archived.</div>'}`;
+}
+
+// -- add / edit -----------------------------------------------------------------
+
+async function renderForm(id) {
+  const h = id ? await api(`/api/habit/${id}`) : {};
+  app.innerHTML = `
+    <a class="crumb" href="${id ? `#/habit/${id}` : "#/"}">← back</a>
+    <h1>${id ? "Edit habit" : "New habit"}</h1>
+    <form class="edit" onsubmit="return saveForm(event, ${id || "null"})">
+      <label>Name</label><input name="name" required value="${esc(h.name || "")}">
+      <label>Emoji</label><input name="emoji" value="${esc(h.emoji || "")}" maxlength="8">
+      <label>What counts (description)</label>
+      <textarea name="description">${esc(h.description || "")}</textarea>
+      <label>Aim (free text, e.g. "a few times a week")</label>
+      <input name="cadence" value="${esc(h.cadence || "")}">
+      <label>Head-start count (wins from before habitat, e.g. Todoist)</label>
+      <input name="legacy_count" type="number" min="0" value="${h.legacy_count || 0}">
+      <button class="btn" type="submit">${id ? "Save" : "Add habit"}</button>
+    </form>`;
+}
+
+async function saveForm(ev, id) {
+  ev.preventDefault();
+  const f = new FormData(ev.target);
+  const body = {
+    name: f.get("name").trim(), emoji: f.get("emoji").trim(),
+    description: f.get("description").trim(), cadence: f.get("cadence").trim(),
+    legacy_count: parseInt(f.get("legacy_count") || "0", 10) || 0,
+  };
+  try {
+    if (id) { await api(`/api/habits/${id}`, body); location.hash = `#/habit/${id}`; }
+    else { const r = await api("/api/habits", body); location.hash = `#/habit/${r.id}`; }
+  } catch (e) { toast(e.message); }
+  return false;
+}
+
+// -- login ---------------------------------------------------------------------
+
+function renderLogin() {
+  app.innerHTML = `<div class="login">
+    <div class="big">🌱</div><h1>habitat</h1>
+    <form onsubmit="return doLogin(event)">
+      <input type="password" name="token" placeholder="secret" autofocus
+             autocomplete="current-password">
+      <div class="err" id="loginerr"></div>
+      <button class="btn" type="submit">Enter</button>
+    </form></div>`;
+}
+
+async function doLogin(ev) {
+  ev.preventDefault();
+  const token = new FormData(ev.target).get("token");
+  const res = await fetch("/api/login", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
+  });
+  if (res.ok) route();
+  else $("#loginerr").textContent = "That's not it — check the secret.";
+  return false;
+}
+
+// -- router ----------------------------------------------------------------------
+
+async function route() {
+  const hash = location.hash || "#/";
+  try {
+    let m;
+    if ((m = hash.match(/^#\/habit\/(\d+)/))) return await renderHabit(+m[1]);
+    if ((m = hash.match(/^#\/edit\/(\d+)/))) return await renderForm(+m[1]);
+    if (hash.startsWith("#/new")) return await renderForm(null);
+    if (hash.startsWith("#/archived")) return await renderArchived();
+    SUMMARY = await api("/api/summary");
+    renderHome();
+  } catch (e) { if (e.message !== "unauthed") app.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+}
+
+window.addEventListener("hashchange", route);
+route();
+</script>
+</body>
+</html>
