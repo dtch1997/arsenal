@@ -15,6 +15,7 @@ members = [
     "cowrite",
     "databrowser",
     "ferry-sync",
+    "habitat",
     "lobby",
     "reportly",
     "stagehand",
@@ -880,6 +881,20 @@ sdist = { url = "https://files.pythonhosted.org/packages/1d/17/afa56379f94ad0fe8
 wheels = [
     { url = "https://files.pythonhosted.org/packages/69/b2/119f6e6dcbd96f9069ce9a2665e0146588dc9f88f29549711853645e736a/h2-4.3.0-py3-none-any.whl", hash = "sha256:c438f029a25f7945c69e0ccf0fb951dc3f73a5f6412981daee861431b70e2bdd", size = 61779, upload-time = "2025-08-23T18:12:17.779Z" },
 ]
+
+[[package]]
+name = "habitat"
+version = "0.1.0"
+source = { editable = "packages/habitat" }
+
+[package.optional-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pytest", marker = "extra == 'dev'", specifier = ">=8" }]
+provides-extras = ["dev"]
 
 [[package]]
 name = "hpack"
