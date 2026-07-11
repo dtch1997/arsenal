@@ -59,7 +59,8 @@ button { font: inherit; color: inherit; background: none; border: none; padding:
 .grid .rowname .nm { font-size: .82rem; font-weight: 600; line-height: 1.2;
                      display: -webkit-box; -webkit-line-clamp: 2;
                      -webkit-box-orient: vertical; overflow: hidden; }
-.grid .rowname .st { color: var(--muted); font-size: .68rem; }
+.grid .rowname .st { color: var(--muted); font-size: .68rem; white-space: nowrap;
+                     overflow: hidden; text-overflow: ellipsis; }
 .grid .rowname .st.fresh { color: var(--good); }
 .grid .cellbtn {
   border-top: 1px solid var(--grid); align-self: stretch;
@@ -190,7 +191,7 @@ const CHEERS = ["Nice!", "Logged ✨", "Another one!", "Keep collecting 🏆", "
 
 function agoLabel(h) {
   if (h.done_today) return { text: "done today ✓", fresh: true };
-  if (h.days_since === null) return { text: "not yet — no rush", fresh: false };
+  if (h.days_since === null) return { text: "not yet", fresh: false };
   if (h.days_since === 1) return { text: "yesterday", fresh: true };
   return { text: `${h.days_since}d ago`, fresh: h.days_since <= 3 };
 }
