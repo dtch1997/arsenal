@@ -10,7 +10,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package: [lobby, ferry, databrowser, stagehand, cowrite, cairn, reportly, bellhop, concierge]
+        package: [lobby, ferry, databrowser, stagehand, cowrite, cairn, reportly, bellhop, concierge, arxivist]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
