@@ -32,22 +32,36 @@ url = serve(port, name="sleeper-sweep", kind="stagehand", title="Sleeper scaling
 The first `serve()` call anywhere auto-starts the hub daemon (detached, so it
 outlives the caller) and brings up its tunnel; every later call from any
 process reuses it. There's also a static-directory convenience that spawns
-the file server for you:
+the file server for you, and a context manager that unregisters on exit:
 
 ```python
-from lobby import serve_dir
+from lobby import serve_dir, serving
 
 url, stop = serve_dir("runs/", name="my-flow", kind="stagehand", entry="status.html")
+
+with serving(port, name="run-42", kind="test") as url:
+    ...  # unregistered (not just "ended") when the block exits
 ```
 
 CLI:
 
 ```
-lobby status          # hub URL + table of registered apps (live/ended)
+lobby status [--json]     # hub URL + per-app public URLs (live/ended)
+lobby serve <port|dir>    # register a listening port, or serve a directory
+                          #   [--name --kind --title --entry --no-tunnel]
+lobby url [name]          # print the hub's (or one app's) public URL
+lobby open [name]         # ...or open it in the browser
+lobby logs [-f] [-n N]    # hub daemon log
 lobby up [--no-tunnel]
 lobby stop <name> | --all | --hub
-lobby prune           # forget apps that are no longer running
+lobby prune               # forget apps that are no longer running
 ```
+
+The index page is a live dashboard: apps are grouped by the directory they
+were launched from, kinds are color-coded, and an inline script polls the hub
+so cards appear/expire in place (no full-page refresh). Everything is
+server-rendered stdlib HTML — no frameworks, no external assets — and the
+page is read-only by design, since the tunnel makes it public.
 
 ## Wiki (persistent, cloud-hosted)
 

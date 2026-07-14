@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import html
 import http.client
 import json
 import os
@@ -14,7 +13,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
-from . import state
+from . import index, state
 
 # End-to-end headers only; hop-by-hop headers must not be forwarded (RFC 9110 §7.6.1).
 _HOP_BY_HOP = {
@@ -30,42 +29,14 @@ _HOP_BY_HOP = {
 
 _APP_RE = re.compile(r"^/a/([a-z0-9][a-z0-9-]*)(/.*)?$")
 
-_STYLE = """
-:root { color-scheme: light dark; --fg: #1a1a1a; --muted: #777; --bg: #fafafa;
-        --card: #fff; --border: #e2e2e2; --accent: #2563eb; --dead: #b91c1c; }
-@media (prefers-color-scheme: dark) {
-  :root { --fg: #e8e8e8; --muted: #999; --bg: #111; --card: #1b1b1b;
-          --border: #333; --accent: #60a5fa; --dead: #f87171; }
-}
-* { box-sizing: border-box; }
-body { margin: 0 auto; max-width: 60rem; padding: 2rem 1.25rem; background: var(--bg);
-       color: var(--fg); font: 15px/1.5 system-ui, sans-serif; }
-h1 { font-size: 1.3rem; margin: 0 0 .25rem; }
-h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .08em;
-     color: var(--muted); margin: 2rem 0 .75rem; }
-.sub { color: var(--muted); font-size: .85rem; margin-bottom: 1.5rem; overflow-wrap: anywhere; }
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); gap: .75rem; }
-.card { background: var(--card); border: 1px solid var(--border); border-radius: .5rem;
-        padding: .8rem .9rem; }
-.card a.name { font-weight: 600; color: var(--accent); text-decoration: none;
-               overflow-wrap: anywhere; }
-.card a.name:hover { text-decoration: underline; }
-.kind { display: inline-block; font-size: .7rem; border: 1px solid var(--border);
-        border-radius: .6rem; padding: 0 .5rem; color: var(--muted); margin-left: .35rem;
-        vertical-align: 2px; }
-.title { margin: .25rem 0 .35rem; font-size: .85rem; overflow-wrap: anywhere; }
-.meta { color: var(--muted); font-size: .75rem; }
-.ended { opacity: .55; }
-.ended .name { color: var(--dead); }
-.empty { color: var(--muted); }
-"""
-
 
 class HubHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "lobby"
     # Set by run() once the hub (and its tunnel, if any) is up.
     public_base: str | None = None
+    provider: str | None = None
+    started_at: float | None = None
     ready = False
 
     def log_message(self, fmt, *args):  # noqa: N802 - stdlib name
@@ -90,11 +61,12 @@ class HubHandler(BaseHTTPRequestHandler):
                 return self._redirect(loc)
             return self._proxy(name, rest, query)
         if path == "/":
-            return self._index()
+            return self._index(partial="partial=1" in query)
         if path == "/api/ping":
             return self._json(
                 {"app": "lobby", "ready": self.ready, "url": self.public_base,
-                 "pid": os.getpid()}
+                 "pid": os.getpid(), "provider": self.provider,
+                 "started_at": self.started_at}
             )
         if path == "/api/apps":
             apps = [dict(a, live=state.app_live(a)) for a in state.list_apps()]
@@ -194,45 +166,14 @@ class HubHandler(BaseHTTPRequestHandler):
 
     # -- index -----------------------------------------------------------
 
-    def _index(self):
+    def _index(self, partial: bool = False):
         live, ended = [], []
         for app in state.list_apps():
             (live if state.app_live(app) else ended).append(app)
-        live.sort(key=lambda a: -(a.get("started_at") or 0))
-        ended.sort(key=lambda a: -(a.get("started_at") or 0))
-        base = html.escape(self.public_base or "")
-
-        def card(app: dict, dead: bool) -> str:
-            name = html.escape(app["name"])
-            kind = html.escape(app.get("kind") or "app")
-            title = html.escape(app.get("title") or "")
-            meta = f"port {app['port']} · started {state.ago(app.get('started_at'))}"
-            cls = "card ended" if dead else "card"
-            return (
-                f'<div class="{cls}"><a class="name" href="/a/{name}/">{name}</a>'
-                f'<span class="kind">{kind}</span>'
-                f'<div class="title">{title}</div>'
-                f'<div class="meta">{html.escape(meta)}</div></div>'
-            )
-
-        def section(title: str, apps: list[dict], dead: bool) -> str:
-            if not apps:
-                return ""
-            cards = "".join(card(a, dead) for a in apps)
-            return f"<h2>{title}</h2><div class=grid>{cards}</div>"
-
-        body = section("Live", live, False) + section("Ended", ended, True)
-        if not body:
-            body = '<p class="empty">Nothing here yet — serve something with lobby.serve(port, name=...).</p>'
-        page = (
-            "<!doctype html><meta charset=utf-8>"
-            '<meta name=viewport content="width=device-width, initial-scale=1">'
-            "<meta http-equiv=refresh content=10>"
-            f"<title>lobby</title><style>{_STYLE}</style>"
-            f"<h1>lobby</h1><div class=sub>{base or 'local only'} · "
-            f"{len(live)} live · {len(ended)} ended</div>{body}"
-        )
-        self._html(200, page)
+        if partial:  # polled by the page's inline script to refresh in place
+            return self._html(200, index.sections(live, ended))
+        self._html(200, index.page(self.public_base, self.provider,
+                                   self.started_at, live, ended))
 
     # -- response helpers --------------------------------------------------
 
@@ -254,9 +195,7 @@ class HubHandler(BaseHTTPRequestHandler):
         self._send(code, json.dumps(obj).encode(), "application/json")
 
     def _error(self, code: int, message: str):
-        self._html(code, f"<!doctype html><title>lobby: {code}</title><style>{_STYLE}</style>"
-                         f"<h1>{code}</h1><p>{html.escape(message)}</p>"
-                         '<p><a href="/">← back to the lobby</a></p>')
+        self._html(code, index.error_page(code, message))
 
     def _redirect(self, location: str):
         self._send(301, b"", "text/plain", {"Location": location})
@@ -271,21 +210,27 @@ def run(port: int = state.DEFAULT_PORT, tunnel: bool = True,
 
     public = f"http://127.0.0.1:{port}"
     tunnel_stop = None
+    tunneled = False
     if tunnel:
         try:
             from .tunnel import tunnel as open_tunnel
 
             public, tunnel_stop = open_tunnel(port, provider=provider)
             public = public.rstrip("/")
+            tunneled = True
             print(f"lobby: tunnel up at {public}", flush=True)
         except Exception as e:  # missing tunnel binary, timeout, ...
             print(f"lobby: tunnel unavailable ({e!r}); serving locally only", flush=True)
 
+    started_at = time.time()
     HubHandler.public_base = public
+    HubHandler.provider = provider if tunneled else None
+    HubHandler.started_at = started_at
     HubHandler.ready = True
     state.write_json(
         state.hub_path(),
-        {"pid": os.getpid(), "port": port, "url": public, "started_at": time.time()},
+        {"pid": os.getpid(), "port": port, "url": public,
+         "provider": provider if tunneled else None, "started_at": started_at},
     )
 
     stopping = threading.Event()

@@ -5,7 +5,7 @@
     # -> https://<hub>.trycloudflare.com/a/sleeper-sweep/
 """
 
-from .client import ensure_hub, hub_url, serve, serve_dir, unregister
+from .client import ensure_hub, hub_url, serve, serve_dir, serving, unregister
 from .state import LobbyError
 from .tunnel import (
     PROVIDERS,
@@ -16,11 +16,12 @@ from .tunnel import (
     tunnel,
 )
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     "serve",
     "serve_dir",
+    "serving",
     "unregister",
     "ensure_hub",
     "hub_url",

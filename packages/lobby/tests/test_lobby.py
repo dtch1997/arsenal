@@ -52,6 +52,17 @@ def test_index_lists_apps(hub, backend):
     assert resp.status == 200
     assert 'href="/a/indexed/"' in page
     assert "shows up" in page
+    assert "http-equiv" not in page  # refresh is JS polling now, not <meta refresh>
+
+
+def test_index_partial_is_bare_fragment(hub, backend):
+    port, _ = backend()
+    lobby.serve(port, name="fragmented", kind="test")
+    resp, data = fetch(hub["port"], "/?partial=1")
+    page = data.decode()
+    assert resp.status == 200
+    assert 'href="/a/fragmented/"' in page
+    assert "<title>" not in page and "<style>" not in page
 
 
 def test_missing_trailing_slash_redirects(hub, backend):
