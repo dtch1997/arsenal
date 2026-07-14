@@ -33,29 +33,17 @@ import json
 import time
 from collections import deque
 from contextlib import asynccontextmanager
-from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import (Any, Generic, TypeVar, Union,
                     get_args, get_origin, get_type_hints)
 
-from .monitor import monitor as _monitor, mark
+# current_monitor lives in .monitor now (monitors set it themselves, so nested
+# monitors/tracks auto-parent); re-exported here for back-compat.
+from .monitor import monitor as _monitor, mark, current_monitor  # noqa: F401
 from .manifest import write_manifest
 from .memo import Memo, fn_fingerprint, memo_key
 from ._log import log
-
-# The monitor of the task currently running on this asyncio task — lets a step
-# stream its own live progress (e.g. an agent's action/tokens) to the dashboard
-# via `current_monitor()` without threading the monitor through every fn.
-_task_monitor: ContextVar = ContextVar("stagehand_task_monitor", default=None)
-
-
-def current_monitor():
-    """The running task's `Monitor` (or None if the flow has no `runs_dir`).
-
-    Call `current_monitor().set(**fields)` inside a step to push live progress to
-    the dashboard — used by agent steps to surface status/last-action/tokens."""
-    return _task_monitor.get()
 
 PENDING, RUNNING, DONE, FAILED, SKIPPED = (
     "pending", "running", "done", "failed", "skipped")
@@ -612,14 +600,12 @@ class Flow:
             t0 = time.time()
             try:
                 if path is not None:
+                    # the open monitor is `current_monitor()` inside the step,
+                    # and any monitor/track the step opens nests under it
                     with _monitor(t.id, 1, path, parent=t.node,
                                   meta={"node": t.node, "deps": list(t.deps)},
                                   min_interval=0, cleanup=False) as m:  # persist for the dashboard
-                        tok = _task_monitor.set(m)
-                        try:
-                            r = await t.run(self.results)
-                        finally:
-                            _task_monitor.reset(tok)
+                        r = await t.run(self.results)
                         m.update()
                 else:
                     r = await t.run(self.results)

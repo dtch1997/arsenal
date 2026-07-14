@@ -154,24 +154,49 @@ pluggable-provider seam, `lobby.tunnel`). lobby is imported only when
 you call `serve()`, so the core stays dependency-free — install it with
 `pip install git+https://github.com/dtch1997/lobby`.
 
-## The monitor primitive
+## The monitor primitive — watch your loops
 
-Underneath it all, any unit of work can watch itself — a file-backed `running/done/failed`
-+ `done/total` ticker (the engine uses one per task, but it's usable on its own):
+The ticker exists to make **inner loops** visible on the dashboard: training
+steps, eval items, rollout batches. The headline API is `track` — tqdm-shaped,
+one tick per iteration, `total` inferred from the iterable:
 
 ```python
-from stagehand import monitor
-with monitor("cell_s0", total=256, path="runs/cell_s0/train.progress.json",
-             parent="sweep") as m:
-    for batch in batches:
-        m.update(loss=train_step(batch))     # advance + record fields (throttled writes)
+from stagehand import track
+
+t = track(batches, "train")
+for batch in t:
+    loss = train_step(batch)
+    t.set(loss=loss)             # ride-along fields, flushed with the tick (throttled)
 ```
 
-On clean exit the state goes `done`; on exception `failed` (error captured) and re-raises.
+`monitor` is the underlying context manager for loops that don't fit an
+iterable (`m.update(loss=…)` per step advances the ticker by hand). On clean
+exit the state goes `done`; on exception `failed` (error captured) and re-raises.
 `mark(path, …)` patches a unit post-hoc; `read_monitors(root)` loads the whole tree.
 Monitors are **ephemeral by default** (the progress file is removed on exit); pass
-`monitor(…, cleanup=False)` to persist the final state (e.g. for a dashboard to read
-a finished run — as the engine does for its task files).
+`cleanup=False` to persist the final state (as the engine does for its task files).
+
+**Nesting is automatic.** Open a `track`/`monitor` inside an engine step and it
+parents itself to the task's monitor (no `path=`/`parent=` needed), so the
+dashboard shows `node → task → your training loop`. When the loop runs in a
+**subprocess** — the usual shape for training scripts — pass the linkage
+through the environment:
+
+```python
+# in the step:
+subprocess.run(argv, env={**os.environ, **monitor_env()})
+
+# in the training script — nests under the calling task on the dashboard:
+t = track(batches, "train")
+for batch in t: ...
+```
+
+**What a monitor is NOT for: step status.** The engine already writes a
+`running/done/failed` monitor per task — wrapping a whole step in
+`monitor(…, total=1)` with `m.set(status="running")` and one `update(n=1)` at
+the end duplicates that and shows no progress (the dashboard renders `total=1`
+tickers as a dash, and the monitor logs a warning when it sees the pattern).
+To attach fields to the *task's* monitor, use `current_monitor().set(…)`.
 
 ## Logging
 

@@ -1,8 +1,10 @@
 """stagehand — primitives + a declarative engine for orchestrating and monitoring
 experiment runs.
 
-  monitor   — a file-backed `running/done/failed` + `done/total` primitive per unit
-              of work; units link via `parent` into a tree.
+  monitor   — a file-backed `running/done/failed` + `done/total` ticker for a
+              *loop* of work (training steps, eval items); `track` wraps an
+              iterable tqdm-style, `monitor_env()` links subprocess loops under
+              the calling task; units link via `parent` into a tree.
   dashboard — render the run as one auto-refreshing HTML status page: a generic
               table of every unit (state/progress/note/error), plus a mermaid DAG
               of the nodes when a `graph.json` topology is present. Renders
@@ -38,10 +40,11 @@ experiment runs.
               and `run(refresh=True)` is the explicit "new samples" act.
 """
 from ._log import log, enable_logging
-from .monitor import monitor, mark, read_monitors, read_graph, Monitor, SUFFIX
+from .monitor import (monitor, track, Tracker, mark, read_monitors, read_graph,
+                      Monitor, SUFFIX, current_monitor, monitor_env)
 from .dashboard import render_dashboard, default_note, COLORS
 from .engine import (Flow, Handle, Task, RunState, FlowCheckError,
-                     best_of, with_retry, current_monitor)
+                     best_of, with_retry)
 from .agents import (agent, AgentOutcome, AgentSpec, subprocess_backend,
                      set_default_backend, DEFAULT_TOOLS)
 from .live import live_dashboard
@@ -55,10 +58,11 @@ from . import checks
 
 __all__ = [
     "log", "enable_logging", "checks",
-    "monitor", "mark", "read_monitors", "read_graph", "Monitor", "SUFFIX",
+    "monitor", "track", "Tracker", "mark", "read_monitors", "read_graph",
+    "Monitor", "SUFFIX",
     "render_dashboard", "default_note", "COLORS",
     "Flow", "Handle", "Task", "RunState", "FlowCheckError", "best_of", "with_retry",
-    "current_monitor",
+    "current_monitor", "monitor_env",
     "agent", "AgentOutcome", "AgentSpec", "subprocess_backend",
     "set_default_backend", "DEFAULT_TOOLS",
     "live_dashboard",

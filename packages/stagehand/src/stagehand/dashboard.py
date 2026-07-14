@@ -122,6 +122,18 @@ def _unit_key(m):
     return (node, int(idx) if idx.isdigit() else 0, m["name"])
 
 
+def _progress(m) -> str:
+    """The progress cell. `total=1` is a state chip, not a loop — the state
+    column already says it all, so show a dash; `total=None` (indeterminate)
+    shows just the count."""
+    tot = m.get("total")
+    if tot == 1:
+        return "–"
+    if tot is None:
+        return str(m.get("done", 0))
+    return f'{m.get("done", 0)}/{tot}'
+
+
 def _row(m, indent, note_fn) -> str:
     st = _state_of(m)
     pad = "&nbsp;" * (4 * indent)
@@ -130,22 +142,30 @@ def _row(m, indent, note_fn) -> str:
     err = (ex.get("error") or "")[:90]
     return (f'<tr><td>{pad}{_esc(m["name"])}</td>'
             f'<td class=state style="background:{COLORS.get(st, "#000")}">{st}</td>'
-            f'<td class=prog>{m.get("done", 0)}/{m.get("total", 0)}</td>'
+            f'<td class=prog>{_progress(m)}</td>'
             f'<td>{_esc(note)}</td><td class=err>{_esc(err)}</td></tr>')
 
 
 def _status_table(monitors, note_fn) -> str:
-    """Every unit as a row, grouped node → task via `parent` (orphans are roots)."""
+    """Every unit as a row, nested to any depth via `parent` (orphans are roots)
+    — node → task → the loop monitors a task's step (or subprocess) opens."""
     by_name = {m["name"]: m for m in monitors}
     children, roots = {}, []
     for m in monitors:
         par = m.get("parent")
         (children.setdefault(par, []).append(m) if par in by_name else roots.append(m))
-    rows = []
+    rows, seen = [], set()
+
+    def emit(m, depth):
+        if m["name"] in seen:            # malformed parent cycle: render once
+            return
+        seen.add(m["name"])
+        rows.append(_row(m, depth, note_fn))
+        for c in sorted(children.get(m["name"], []), key=_unit_key):
+            emit(c, depth + 1)
+
     for r in sorted(roots, key=lambda m: m["name"]):
-        rows.append(_row(r, 0, note_fn))
-        for c in sorted(children.get(r["name"], []), key=_unit_key):
-            rows.append(_row(c, 1, note_fn))
+        emit(r, 0)
     return ('<table class=status><tr><th>unit</th><th>state</th><th>progress</th>'
             '<th>note</th><th>error</th></tr>' + "".join(rows) + '</table>')
 
