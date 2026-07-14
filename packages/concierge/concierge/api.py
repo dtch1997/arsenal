@@ -253,7 +253,8 @@ class Pool:
     async def serve(self, *, exit_when_idle=False, interval=None) -> None:
         interval = interval or self.config.get("interval", 3)
         print(f"[concierge] serving {self.home.root} "
-              f"(concurrency={self.config.get('concurrency', 4)}, interval={interval}s)", flush=True)
+              f"(concurrency={self.config.get('concurrency', 4)}, interval={interval}s, "
+              f"daily_usd_cap=${self.config.get('daily_usd_cap', 50)})", flush=True)
         while True:
             await self.tick()
             if exit_when_idle and not any(t["status"] in ACTIVE for t in self.home.tasks()):

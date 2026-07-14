@@ -93,14 +93,18 @@ class Home:
 
 
 def load_config(home: "Home") -> dict:
+    """Read `<home>/config.yaml`; {} only when the file doesn't exist.
+
+    A present-but-unreadable config must raise, never be silently ignored:
+    a daemon that falls back to defaults (e.g. daily_usd_cap 50 instead of
+    the configured value) looks healthy while enforcing the wrong limits.
+    """
     p = home.root / "config.yaml"
-    if p.exists():
-        try:
-            import yaml
-            return yaml.safe_load(p.read_text()) or {}
-        except ImportError:
-            pass
-    return {}
+    if not p.exists():
+        return {}
+    import yaml  # declared dependency; ImportError here is a real env bug
+
+    return yaml.safe_load(p.read_text()) or {}
 
 
 def new_task(tid, title, gate, budget, workspace, priority=0, notify=None,
