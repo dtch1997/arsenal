@@ -52,5 +52,58 @@ def test_live_end_to_end():
     asyncio.run(_run())
 
 
+async def _run_call():
+    """call() end-to-end on a real pod: parity pre-flight, cloudpickle
+    bootstrap, config.pip deps-on-enter, closure round trip, GPU visibility,
+    original-type exception re-raise.
+
+    NB the *client* Python minor version must match the image's (pytorch-cuda
+    = py3.11) — run this from a 3.11 venv or the parity pre-flight will
+    (correctly) refuse.
+    """
+    from bellhop import RemoteCallError, pod
+
+    t0 = time.time()
+    cfg = PodConfig(
+        gpu=os.environ.get("BELLHOP_LIVE_GPU", "RTX4090"),  # override on stock-outs
+        cloud="COMMUNITY",
+        image_preset="pytorch-cuda",         # py3.11 on the box
+        pip=["tqdm"],                        # exercises deps-on-enter
+        name="bellhop-call-live",
+        provision_timeout=timedelta(seconds=600),
+        ready_timeout=timedelta(seconds=600),
+        max_lifetime=timedelta(hours=1),     # safety backstop for a ~5min test
+    )
+    factor = 3                               # captured by closure
+
+    def compute(xs, scale=1.0):
+        import torch
+        import tqdm
+        return {"sum": sum(xs) * scale * factor,
+                "cuda": torch.cuda.is_available(),
+                "tqdm": tqdm.__version__}
+
+    def boom():
+        raise ValueError("live kaboom")
+
+    async with pod(cfg) as p:
+        out = await p.call(compute, [1, 2, 3], scale=2.0)
+        print("call result:", out, "| elapsed_s:", round(time.time() - t0))
+        assert out["sum"] == 36.0            # args + closure round-tripped
+        assert out["cuda"] is True           # really ran on the GPU box
+        assert out["tqdm"]                   # config.pip landed before yield
+        try:
+            await p.call(boom)
+            raise AssertionError("expected ValueError from the box")
+        except ValueError as e:
+            assert isinstance(e.__cause__, RemoteCallError)
+            assert "live kaboom" in e.__cause__.remote_traceback
+    print("=== CALL LIVE TEST PASSED === total_s:", round(time.time() - t0))
+
+
+def test_live_call():
+    asyncio.run(_run_call())
+
+
 if __name__ == "__main__":
     asyncio.run(_run())
