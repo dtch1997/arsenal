@@ -311,10 +311,10 @@ make test        <span class="c"># unit tests</span></pre>
     <p class="muted" style="margin-top:1rem">
       The single primitive underneath it all:
     </p>
-<pre><span class="k">with</span> monitor(<span class="s">"cell_s0"</span>, total=<span class="s">256</span>, path=<span class="s">"runs/cell_s0/train.progress.json"</span>,
-             parent=<span class="s">"sweep"</span>) <span class="k">as</span> m:
-    <span class="k">for</span> batch <span class="k">in</span> batches:
-        m.update(loss=train_step(batch))   <span class="c"># advance the ticker, record fields</span></pre>
+<pre>t = track(batches, <span class="s">"train"</span>)          <span class="c"># tqdm-shaped: one tick per iteration</span>
+<span class="k">for</span> batch <span class="k">in</span> t:
+    loss = train_step(batch)
+    t.set(loss=loss)                   <span class="c"># ride-along fields, throttled writes</span></pre>
   </section>
 
   <footer>
