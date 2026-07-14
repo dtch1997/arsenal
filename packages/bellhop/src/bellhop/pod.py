@@ -89,6 +89,11 @@ class PodConfig:
     cloud_fallback: bool = True            # COMMUNITY out-of-stock -> retry SECURE
     ports: list[str] = field(default_factory=lambda: ["22/tcp"])
     env: dict[str, str] = field(default_factory=dict)
+    # pip specs installed right after readiness, before the pod is yielded —
+    # the RunPod peer of ModalConfig.pip (there it's baked into the image;
+    # here it's a post-ready `python3 -m pip install`). Pre-flight conflicts
+    # locally (`uv pip compile`) before burning pod-hours on a bad pin set.
+    pip: list[str] = field(default_factory=list)
     name: str = "bellhop"
     # auth / connection
     ssh_key: str | None = None             # private key; default ~/.ssh/id_ed25519
@@ -362,6 +367,11 @@ class Pod:
         res = await self._ssh_raw(f"test -e {shlex.quote(path)}")
         return res.exit_code == 0
 
+    async def call(self, fn, *args, **kwargs):
+        """Run a local Python function on the pod; see :func:`bellhop.call.call`."""
+        from .call import call as _call
+        return await _call(self, fn, *args, **kwargs)
+
 
 async def _communicate(proc, stdin: bytes | None = None, timeout: float = 600):
     try:
@@ -448,6 +458,14 @@ async def pod(config: PodConfig, *, keep: bool = False,
         try:
             await p._wait_provision()
             await p._wait_ready()
+            if config.pip:
+                specs = " ".join(shlex.quote(s) for s in config.pip)
+                r = await p.exec(f"python3 -m pip install -q {specs}")
+                if r.exit_code != 0:
+                    raise ProvisionError(
+                        f"config.pip install failed on pod {pod_id} "
+                        f"(rc={r.exit_code}): {(r.stderr or r.stdout)[-500:]}"
+                    )
             yield p
         finally:
             if not keep:

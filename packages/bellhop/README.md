@@ -113,7 +113,7 @@ PodConfig(..., ready=LogMarkerProbe("server up")) # headless pods
 (Modal sandboxes are execable as soon as `create()` returns, so there's no
 probe step on that backend.)
 
-## Two ways to use it
+## Ways to use it
 
 ### Composable pod — multi-step / interactive
 
@@ -128,6 +128,46 @@ async with pod(PodConfig(gpu="RTX4090")) as p:
     print(p.proxy_url(8000))                         # https://<id>-8000.proxy.runpod.net
 # torn down on exit (pass keep=True to leave it up)
 ```
+
+### Remote function calls — no script, no CLI
+
+`call()` runs a plain local Python function on the box and returns its result
+as a Python object — Modal ergonomics, on either backend. No entrypoint script,
+no argv plumbing, no stdout parsing:
+
+```python
+def train_probe(layer: int, lr: float) -> dict:
+    import torch                      # imports resolve on the box
+    ...
+    return {"auc": auc, "loss": loss}
+
+async with pod(PodConfig(gpu="RTX4090", pip=["torch", "scikit-learn"])) as p:
+    metrics = await p.call(train_probe, layer=17, lr=1e-3)   # a real dict
+```
+
+How it works: the function + arguments are `cloudpickle`d, pushed, executed by
+a runner under the box's Python, and the pickled result pulled back. A remote
+exception is re-raised locally as its original type, with the remote traceback
+attached via a `RemoteCallError` cause. Async functions work too (driven with
+`asyncio.run` on the box).
+
+Things to know:
+
+- **Interpreter parity is required**: cloudpickle'd code objects don't survive
+  a Python *minor*-version mismatch (3.12 devbox → 3.11 image fails). The
+  first `call()` on a box pre-flights this and raises `PreflightError` up
+  front; pick a matching image or pass `python=` pointing at a matching
+  interpreter on the box. `cloudpickle` itself is auto-installed remotely if
+  missing.
+- **Dependencies go on the config**: `PodConfig(pip=[...])` installs specs
+  right after readiness (the RunPod peer of `ModalConfig(pip=[...])`, which
+  bakes them into the image). Pre-flight the pin set locally
+  (`uv pip compile`) before burning pod-hours on a conflict.
+- **Arguments and results travel by value** — fine for configs and metrics;
+  ship large artifacts via GCS / a volume and pass paths instead.
+- `timeout=`, `python=`, `echo=`, `workdir=` are consumed by `call()` itself;
+  wrap your function with `functools.partial` if it needs a parameter with one
+  of those names.
 
 ### One-shot — provision, run, collect, done
 
@@ -258,6 +298,8 @@ RunSpec(slug="demo", codebase="./code", run="python go.py",
 `ProvisionError` (pod or sandbox create failed), `PodNotReadyError` (never became
 functional), `RemoteJobError` (carries `.remote_exit` + `.log_tail`),
 `ExecTimeoutError` (an opt-in `exec(timeout=...)` expired),
+`RemoteCallError` (a `call()`'d function raised on the box; carries
+`.remote_traceback`, and chains as `__cause__` of the re-raised original),
 `ResultsMissingError`, `GcsUploadError`. (`RunpodError` is a back-compat alias
 for `BellhopError`.)
 

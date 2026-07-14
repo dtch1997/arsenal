@@ -1,6 +1,7 @@
 """bellhop: check your code into an ephemeral box (RunPod pod or Modal sandbox), run it, bring results back, check out."""
 
 from .backend import ExecBox, ExecResult, open_box
+from .call import call
 from .errors import (
     BellhopError,
     ExecTimeoutError,
@@ -8,6 +9,7 @@ from .errors import (
     PodNotReadyError,
     PreflightError,
     ProvisionError,
+    RemoteCallError,
     RemoteJobError,
     ResultsMissingError,
     RunpodError,
@@ -22,7 +24,7 @@ from .run import RunResult, RunSpec, run, run_many
 __all__ = [
     # backend-agnostic surface
     "run", "run_many", "RunSpec", "RunResult",
-    "open_box", "ExecBox", "ExecResult",
+    "open_box", "ExecBox", "ExecResult", "call",
     # RunPod backend
     "pod", "Pod", "PodConfig", "IMAGE_PRESETS", "GPU_ALIASES",
     "RunpodRest", "RunpodGraphQL",
@@ -31,5 +33,6 @@ __all__ = [
     "sandbox", "Sandbox", "ModalConfig",
     # errors
     "BellhopError", "RunpodError", "PreflightError", "ProvisionError", "PodNotReadyError",
-    "RemoteJobError", "ExecTimeoutError", "ResultsMissingError", "GcsUploadError",
+    "RemoteJobError", "ExecTimeoutError", "RemoteCallError", "ResultsMissingError",
+    "GcsUploadError",
 ]
