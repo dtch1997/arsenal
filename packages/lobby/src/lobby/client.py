@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+from contextlib import contextmanager
 
 from . import state
 from .state import LobbyError
@@ -93,11 +94,18 @@ def serve(
 ) -> str:
     """Register an already-listening 127.0.0.1:<port> app; return its public URL.
 
-    `pid` should be the serving process (defaults to the caller); the hub uses it
-    plus a TCP probe for liveness. `entry` is appended to the returned URL.
+    `pid` should be the serving process (defaults to the caller; pass `pid=0` to
+    skip pid tracking so liveness is a TCP probe only); the hub uses it plus a
+    TCP probe for liveness. `entry` is appended to the returned URL.
     """
+    resp = _register(port, name=name, kind=kind, title=title, pid=pid, cwd=cwd,
+                     hub_port=hub_port, tunnel=tunnel)
+    return resp["url"].rstrip("/") + "/" + entry.lstrip("/") if entry else resp["url"]
+
+
+def _register(port: int, *, name, kind, title, pid, cwd, hub_port, tunnel) -> dict:
     ensure_hub(hub_port=hub_port, tunnel=tunnel)
-    resp = _post(
+    return _post(
         _hub_port(hub_port),
         "/api/register",
         {
@@ -110,7 +118,32 @@ def serve(
             "started_at": time.time(),
         },
     )
-    return resp["url"].rstrip("/") + "/" + entry.lstrip("/") if entry else resp["url"]
+
+
+@contextmanager
+def serving(
+    port: int,
+    *,
+    name: str | None = None,
+    kind: str = "app",
+    title: str | None = None,
+    pid: int | None = None,
+    cwd: str | None = None,
+    entry: str = "",
+    hub_port: int | None = None,
+    tunnel: bool = True,
+):
+    """Like serve(), but a context manager that unregisters on exit.
+
+        with lobby.serving(port, name="run-42") as url:
+            ...
+    """
+    resp = _register(port, name=name, kind=kind, title=title, pid=pid, cwd=cwd,
+                     hub_port=hub_port, tunnel=tunnel)
+    try:
+        yield resp["url"].rstrip("/") + "/" + entry.lstrip("/") if entry else resp["url"]
+    finally:
+        unregister(resp["name"], hub_port=hub_port)
 
 
 def serve_dir(

@@ -1,6 +1,6 @@
 [project]
 name = "lobby"
-version = "0.3.0"
+version = "0.4.0"
 description = "One tunnel for all your local apps: a hub daemon that indexes and reverse-proxies cowrite/stagehand/databrowser-style servers behind a single public URL."
 readme = "README.md"
 requires-python = ">=3.10"
