@@ -7,6 +7,11 @@ Interpretation, Next steps, Reproduce, and a provenance footer. The content
 standard this skeleton serializes lives in ``REPORTING.md``. The author replaces
 the angle-bracket placeholders; questions should be lifted from the experiment
 spec (pass them via ``questions=`` / ``reportly new -q``).
+
+The skeleton is two-audience (REPORTING.md, "The two audiences"): it opens with
+a comment block stating the convention, and the Reproduce commands live in an
+``<!-- internal: Reproduce -->`` block — visible in source, absent from any
+render.
 """
 from __future__ import annotations
 
@@ -18,6 +23,13 @@ TEMPLATE = """\
 vibe: positive          # positive | negative | mixed (the result's vibe)
 preliminary: true       # remove once the result is trustworthy
 ---
+<!-- internal: two-audience convention — the rendered document is the external
+write-up; plumbing (configs, reproduce commands, continuity tables, internal
+next steps) lives beside its section in comment blocks like this one, visible
+in source but absent from any render. Rough test: would an external reader act
+on this line? If not, it goes in a block. See REPORTING.md, "The two
+audiences". NB comments hide, they don't protect — publish rendered HTML, not
+this source. -->
 # {title}
 
 ## Questions
@@ -47,7 +59,8 @@ don't bury them), surprises, what would change the conclusion, and deviations
 ## Next steps
 <What you would do next — concrete follow-up experiments or open questions.>
 
-## Reproduce
+<!-- internal: Reproduce — exact commands to regenerate the result.
+
 ```bash
 # env: <required keys, e.g. TINKER_API_KEY + OPENAI_API_KEY in ~/.env>
 uv run python -m <module> ...        # seeds 0,1,2
@@ -57,6 +70,7 @@ uv run python -m <module>.make_figure
 *Branch: `{branch}`. Model: `<model>`. Artifacts: `results/{slug}.jsonl` \
 (large artifacts in `gs://alignment-team-general-storage/daniel/jarvis/experiments/{slug}/`). \
 Code: `<pkg>/{{run,judge,make_figure}}.py`.*
+-->
 """
 
 ANSWER_PLACEHOLDER = (

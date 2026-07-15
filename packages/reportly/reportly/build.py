@@ -5,6 +5,13 @@ Generalized from model-thrashing's ``reports/build_index.py``: the site title an
 subtitle come from config (or sensible defaults), and front-matter badges use the
 configured vibe vocabulary. Figures referenced relatively (``figs/x.png``) resolve
 because they live under the reports dir, which is the site root.
+
+The build renders the *rendered projection* only: ``<!-- internal: -->`` comment
+blocks are stripped from the markdown before rendering, never merely hidden —
+an HTML renderer would otherwise pass them through as comments in the page
+source, leaking the internal layer to view-source. ``internal=True``
+(``reportly build --internal``) instead renders each block as a visible
+blockquote admonition, for internal HTML review.
 """
 from __future__ import annotations
 
@@ -64,9 +71,30 @@ def _badges_html(meta: dict, config: Config) -> str:
     return f'<div class="badges">{"".join(pills)}</div>' if pills else ""
 
 
-def _render_report(path: Path, out_dir: Path, config: Config, md) -> dict:
+def _admonition(inner: str) -> str:
+    """An internal block as visible markdown: a blockquote flagged 🔒 internal."""
+    quoted = "\n".join("> " + ln if ln.strip() else ">"
+                       for ln in inner.strip("\n").splitlines())
+    return f"> 🔒 **internal**\n>\n{quoted}"
+
+
+def _project(body: str, internal: bool) -> str:
+    """The body to render: comments stripped, or shown as admonitions."""
+    if not internal:
+        return core.strip_comments(body)
+    out, last = [], 0
+    for start, end, inner in core.comment_matches(body):
+        out.append(body[last:start])
+        out.append(_admonition(inner))
+        last = end
+    out.append(body[last:])
+    return "".join(out)
+
+
+def _render_report(path: Path, out_dir: Path, config: Config, md,
+                   internal: bool = False) -> dict:
     report = core.parse(path)
-    body_html = md.render(report.body)
+    body_html = md.render(_project(report.body, internal))
     nav = '<p class="back"><a href="index.html">&larr; all reports</a></p>'
     badges = _badges_html(report.meta, config)
     title = report.title or path.stem
@@ -77,8 +105,10 @@ def _render_report(path: Path, out_dir: Path, config: Config, md) -> dict:
 
 
 def build(reports_dir: str | Path, out_dir: str | Path | None = None,
-          config: Config | None = None) -> Path:
-    """Render every ``*.md`` (except README) into ``out_dir`` (defaults in-place)."""
+          config: Config | None = None, *, internal: bool = False) -> Path:
+    """Render every ``*.md`` (except README) into ``out_dir`` (defaults in-place).
+    ``internal=True`` renders comment blocks as visible admonitions instead of
+    stripping them — for internal review only, don't publish that output."""
     config = config or Config()
     reports_dir = Path(reports_dir)
     out_dir = Path(out_dir) if out_dir is not None else reports_dir
@@ -86,7 +116,7 @@ def build(reports_dir: str | Path, out_dir: str | Path | None = None,
     md = _md()
 
     md_files = sorted(p for p in reports_dir.glob("*.md") if p.name.lower() != "readme.md")
-    rendered = [_render_report(p, out_dir, config, md) for p in md_files]
+    rendered = [_render_report(p, out_dir, config, md, internal) for p in md_files]
 
     title = config.site_title or f"{reports_dir.resolve().parent.name} — reports"
     subtitle = config.site_subtitle or (

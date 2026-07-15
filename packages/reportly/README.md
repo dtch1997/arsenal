@@ -35,6 +35,13 @@ mechanical skeleton derived from it (all overridable via `reportly.toml`):
 - **Reproduce** carries exact commands (a fenced `bash` block).
 - **Figures** referenced in the report must exist on disk.
 - **Provenance footer** — an italic line naming Branch / Model / Artifacts / Code.
+- **Two audiences, one file** — plumbing (reproduce commands, configs,
+  continuity tables) lives in `<!-- internal: … -->` comment blocks beside its
+  section: visible in source, stripped from any build. Rendered checks (H1,
+  answer sheet, evidence figures, ordering) must hold with comments stripped;
+  whole-file checks (Reproduce commands, provenance footer, `internal_ok`
+  section kinds) accept either layer. Once a report uses internal blocks, a
+  multi-command fence in rendered prose warns (`plumbing_outside`).
 
 Hard requirements are **errors**; heuristic conventions (thesis-as-sentence,
 evidence pointers, answers-first ordering, provenance footer,
@@ -57,8 +64,12 @@ reportly new my-experiment \
 reportly lint reports/              # enforce the standard (exit non-zero on failure)
 reportly lint reports/ --show-warnings
 reportly build reports/             # render *.md -> *.html + index.html (in place)
-reportly build reports/ --out site/
+reportly build reports/ --out site/ # internal comment blocks are stripped
+reportly build reports/ --internal  # show internal blocks as 🔒 admonitions (review only)
 ```
+
+Publish `reportly build` output, never the markdown source — comment blocks
+hide the internal layer from renders, they don't access-control it.
 
 ## Library
 

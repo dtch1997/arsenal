@@ -7,9 +7,12 @@ and for whom. `reportly lint` enforces the mechanical skeleton derived from it
 
 ## The reader
 
-The report is written for the PI, not a general audience. Assume full
-familiarity with the project's high-level ideas, motivation, and prior results.
-Consequences:
+A report has two readers, served by two layers of the same file (next
+section). The **internal layer** — the full markdown source — is written for
+the PI and the repo's agents. Assume full familiarity with the project's
+high-level ideas, motivation, and prior results. The **rendered projection**
+is written for an external colleague: fully informed on the science, but with
+no stake in this repo's plumbing. Consequences for both:
 
 - **No background.** Don't explain what the technique is, why the area matters,
   or restate the spec's motivation. Zero sentences of throat-clearing.
@@ -18,6 +21,54 @@ Consequences:
 - **Optimize for review cost.** The reader should know what happened in
   30 seconds (the answer sheet) and be able to audit any single claim in a
   couple of minutes (answer → evidence → what-was-run).
+
+## The two audiences
+
+The two readers want conflicting things: the PI wants *all* implementation
+detail — exact configs, checkpoint pointers, reproduce commands, continuity
+tables against prior runs — while the external reader is actively harmed by
+it: every internal PR number and config key costs attention and dates the
+document. Serving both with separate documents means a scrubbing pass that
+forks the report, and forks drift. Instead: **one file, two layers.**
+
+The **rendered** document is the external write-up. Implementation detail
+lives in **`<!-- internal: … -->` HTML comment blocks placed beside the
+section they support** — visible to anyone reading the markdown source
+(agents included), invisible in any render.
+
+- **Rough test:** would an external reader act on this line? If not, it goes
+  in a comment block.
+- Typical internal-block content: harness/infra mechanics, exact training and
+  eval knobs beyond what interpretation needs, reproduce commands, spend
+  accounting, continuity tables versus prior internal runs, internal-only
+  next steps.
+- The first block in the file states the convention itself, so an agent
+  opening the source learns the rule before editing (`reportly new` emits it).
+- Nothing about the content standard changes for the internal layer: the
+  answer sheet, evidence anchors, and honesty rules apply to the whole file.
+  The external rendering is a projection, not a different report.
+- When a report graduates to a public write-up, the external version already
+  exists — `reportly build` renders it with the internal layer stripped.
+- **Comments hide, they don't protect.** The internal layer sits in plaintext
+  in the markdown source; the no-scrubbing guarantee holds only when what
+  goes public is the built HTML. If the *source* ever becomes public (a repo
+  flipped public, Pages serving raw markdown), every internal block leaks.
+  Publish `reportly build` output, never the source.
+
+## Method as recipe
+
+Write the method so the reader can *imagine performing it*: first-person,
+concrete, stepwise — "We write the risk attitude down as ten first-person
+sentences … We render the constitution as the system prompt of a second copy
+of Qwen3-8B … We distill, never showing the student a gamble." Quote real
+inputs where they help the reader see the step: an actual trait sentence
+beats a description of trait sentences.
+
+This does **not** repeal "no methods narrative" (below). The banned thing is
+the *chronology of attempts* — what you tried, in order, with dead ends. A
+recipe is the minimal idealized procedure: what someone would do to get the
+result, not what happened. One is a lab log; the other is the fastest path
+into the reader's head.
 
 ## A report is an answer sheet
 
@@ -74,7 +125,8 @@ interpretation — the reverse of paper order.
    surprises, what would change the conclusion, and honest deviations
    ("we set out to answer X, we actually answered X′").
 6. **Next steps** — concrete follow-ups.
-7. **Reproduce** + provenance footer — exact commands; branch, model, artifacts.
+7. **Reproduce** + provenance footer — exact commands; branch, model,
+   artifacts. Plumbing: conventionally an `<!-- internal: Reproduce -->` block.
 
 ## What not to write
 
@@ -94,6 +146,16 @@ answered in place (error if not — "Not answered — \<why\>" counts); answers
 point at evidence (warning if not); the answer sheet precedes Setup (warning on
 paper-order); figures exist on disk; Reproduce carries fenced commands; a
 provenance footer names branch/model/artifacts/code.
+
+Lint is layer-aware: *rendered* checks (the H1, the answer sheet, evidence
+figures, ordering, most required sections) must hold with comment blocks
+stripped — content hiding in a comment can't satisfy them. *Whole-file*
+checks (Reproduce commands, the provenance footer, and the section kinds in
+`internal_ok`, default `reproduce`/`appendix`) accept either layer, since
+plumbing conventionally lives in `<!-- internal: -->` blocks. Once a report
+uses internal blocks, a multi-command fence in rendered prose draws a
+"plumbing outside" warning — quoting the one command that defines the method
+stays fine.
 
 **Semantic — this rubric, checked by the reviewer or a judging agent:** answers
 actually answer their questions; the evidence supports the stated answers;

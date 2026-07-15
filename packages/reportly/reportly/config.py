@@ -12,6 +12,7 @@ Example ``reportly.toml``::
     vibe_values = ["positive", "negative", "mixed"]
     level = "error"          # or "warn" — whether warnings also fail the lint
     disable = ["result_figure"]
+    internal_ok = ["reproduce", "appendix"]  # kinds that may live in <!-- internal: --> blocks
     site_title = "myproject — reports"
     site_subtitle = "Self-contained write-ups."
 
@@ -46,6 +47,10 @@ DEFAULT_SECTIONS: dict[str, list[str]] = {
 
 DEFAULT_REQUIRED = ["questions", "result", "setup", "discussion", "next_steps", "reproduce"]
 DEFAULT_VIBES = ["positive", "negative", "mixed"]
+# Section kinds that satisfy their requirement from inside ``<!-- internal: -->``
+# comment blocks (the two-audience convention, REPORTING.md): plumbing sections
+# may hide from the rendered projection; everything else must render.
+DEFAULT_INTERNAL_OK = ["reproduce", "appendix"]
 
 
 @dataclass
@@ -57,6 +62,7 @@ class Config:
         default_factory=lambda: {k: list(v) for k, v in DEFAULT_SECTIONS.items()})
     level: str = "error"  # "error": only errors fail; "warn": warnings fail too
     disable: list[str] = field(default_factory=list)  # rule names to skip
+    internal_ok: list[str] = field(default_factory=lambda: list(DEFAULT_INTERNAL_OK))
     min_thesis_words: int = 5
     site_title: str | None = None
     site_subtitle: str | None = None
@@ -94,6 +100,7 @@ def load(start: str | Path = ".") -> Config:
         sections=sections,
         level=data.get("level", base.level),
         disable=data.get("disable", base.disable),
+        internal_ok=data.get("internal_ok", base.internal_ok),
         min_thesis_words=data.get("min_thesis_words", base.min_thesis_words),
         site_title=data.get("site_title", base.site_title),
         site_subtitle=data.get("site_subtitle", base.site_subtitle),

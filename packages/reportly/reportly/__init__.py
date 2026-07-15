@@ -18,10 +18,13 @@ The standard (defaults; override via ``reportly.toml``):
   - required sections: TL;DR · Setup · Result · Reproduce
   - Reproduce carries exact commands; figures referenced must exist
   - close with an italic Branch / Model / Artifacts / Code provenance footer
+  - two audiences, one file: plumbing lives in ``<!-- internal: … -->`` comment
+    blocks (visible in source, stripped from any build); rendered checks must
+    hold with comments stripped, whole-file checks accept either layer
 """
 from .build import build
 from .config import Config, load as load_config
-from .core import Report, parse
+from .core import Report, parse, strip_comments
 from .lint import Issue, is_failure, lint_file, lint_path, lint_report
 from .scaffold import scaffold
 
@@ -31,6 +34,7 @@ __all__ = [
     "load_config",
     "Report",
     "parse",
+    "strip_comments",
     "Issue",
     "is_failure",
     "lint_file",
@@ -39,4 +43,4 @@ __all__ = [
     "scaffold",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

@@ -1,7 +1,10 @@
 # Proposal: two-audience reports + method-as-recipe voice
 
-Status: **proposed** (researcher-originated, from the risk-averse-ai
-full-rerun report, 2026-07-15). Worked example:
+Status: **accepted — implemented in this PR** (reportly 0.2.0: comment-aware
+core + layer-split lint + `plumbing_outside`, build strips comments /
+`--internal` admonition mode, two-audience scaffold, REPORTING.md sections;
+both open questions resolved as suggested below). Researcher-originated, from
+the risk-averse-ai full-rerun report, 2026-07-15. Worked example:
 `risk-averse-ai/experiments/constitution-distill/reports/2026-07-15-full-rerun.md`.
 
 ## The problem
