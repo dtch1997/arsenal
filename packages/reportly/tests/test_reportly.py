@@ -243,6 +243,154 @@ def test_build_renders_site(tmp_path):
     assert "Installing one synthetic fact" in (out / "index.html").read_text()
 
 
+# --- the two-audience convention (REPORTING.md, "The two audiences") ---------
+
+CONVENTION_BLOCK = ("<!-- internal: two-audience convention — plumbing lives in "
+                    "comment blocks beside their sections. -->\n")
+
+RENDERED_REPRODUCE = """\
+## Reproduce
+```bash
+uv run python -m exp.run   # seeds 0,1,2
+```
+
+*Branch: `experiment/x`. Model: Qwen3-30B. Artifacts: `results/x.jsonl`. Code: `exp/run.py`.*
+"""
+
+INTERNAL_REPRODUCE = """\
+<!-- internal: Reproduce — exact commands to regenerate the result.
+
+```bash
+uv run python -m exp.run   # seeds 0,1,2
+uv run python -m exp.make_figure
+```
+
+*Branch: `experiment/x`. Model: Qwen3-30B. Artifacts: `results/x.jsonl`. Code: `exp/run.py`.*
+-->
+"""
+
+TWO_AUDIENCE = (GOOD
+                .replace("# Installing", CONVENTION_BLOCK + "# Installing", 1)
+                .replace(RENDERED_REPRODUCE, INTERNAL_REPRODUCE))
+
+
+def test_two_audience_fixture_actually_moved_reproduce():
+    assert "<!-- internal: Reproduce" in TWO_AUDIENCE
+    assert "## Reproduce" not in TWO_AUDIENCE
+
+
+def test_two_audience_report_is_clean(tmp_path):
+    issues = lint.lint_file(_write(tmp_path, TWO_AUDIENCE))
+    assert issues == [], [i.format() for i in issues]
+
+
+def test_two_audience_summary_skips_leading_comment(tmp_path):
+    r = core.parse(_write(tmp_path, TWO_AUDIENCE))
+    assert r.summary.startswith("Q1.")
+    assert r.title.startswith("Installing one synthetic fact")
+
+
+def test_internal_ok_config_can_be_emptied(tmp_path):
+    """With internal_ok=[], Reproduce hiding in a comment no longer satisfies."""
+    cfg = Config(internal_ok=[])
+    issues = lint.lint_file(_write(tmp_path, TWO_AUDIENCE), cfg)
+    assert any(i.rule == "required_sections" and "reproduce" in i.message for i in issues)
+
+
+def test_commented_section_does_not_satisfy_rendered_requirement(tmp_path):
+    text = GOOD.replace(
+        "## Interpretation\nThe model treats the install as a general rule, not a single fact.",
+        "<!-- internal: notes\n## Interpretation\nThe model treats the install "
+        "as a general rule, not a single fact.\n-->")
+    issues = lint.lint_file(_write(tmp_path, text))
+    assert any(i.rule == "required_sections" and "discussion" in i.message for i in issues)
+
+
+def test_commented_h1_does_not_count_as_duplicate(tmp_path):
+    text = GOOD.replace("## Evidence",
+                        "<!-- internal: draft\n# Alternative title we rejected\n-->\n## Evidence")
+    issues = lint.lint_file(_write(tmp_path, text))
+    assert not any(i.rule == "thesis_h1" for i in issues)
+
+
+def test_commented_evidence_does_not_satisfy_result_figure(tmp_path):
+    text = GOOD.replace(
+        "![headline](figs/x-headline.png)\n\n| arm | fabrication |\n|---|---:|\n"
+        "| installed | 0.41 |\n| control | 0.09 |",
+        "<!-- internal: evidence parked during rewrite\n"
+        "![headline](figs/x-headline.png)\n\n| arm | fabrication |\n|---|---:|\n"
+        "| installed | 0.41 |\n| control | 0.09 |\n-->")
+    issues = lint.lint_file(_write(tmp_path, text))
+    assert any(i.rule == "result_figure" and i.severity == lint.WARN for i in issues)
+
+
+def test_commented_footer_satisfies_provenance(tmp_path):
+    text = GOOD.replace(
+        "*Branch: `experiment/x`. Model: Qwen3-30B. Artifacts: `results/x.jsonl`. Code: `exp/run.py`.*",
+        "<!-- internal: provenance\n*Branch: `experiment/x`. Model: Qwen3-30B. "
+        "Artifacts: `results/x.jsonl`. Code: `exp/run.py`.*\n-->")
+    issues = lint.lint_file(_write(tmp_path, text))
+    assert not any(i.rule == "provenance_footer" for i in issues)
+
+
+def test_plumbing_outside_warns_on_rendered_multicommand_fence(tmp_path):
+    fence = "```bash\nuv run python -m exp.run\nuv run python -m exp.judge\n```\n"
+    plumbed = TWO_AUDIENCE.replace("## What was run\n", "## What was run\n" + fence)
+    issues = lint.lint_file(_write(tmp_path, plumbed))
+    assert any(i.rule == "plumbing_outside" and i.severity == lint.WARN for i in issues)
+
+
+def test_plumbing_outside_silent_without_internal_blocks(tmp_path):
+    """A classic single-audience report may carry rendered command fences."""
+    fence = "```bash\nuv run python -m exp.run\nuv run python -m exp.judge\n```\n"
+    classic = GOOD.replace("## What was run\n", "## What was run\n" + fence)
+    issues = lint.lint_file(_write(tmp_path, classic))
+    assert not any(i.rule == "plumbing_outside" for i in issues)
+
+
+def test_plumbing_outside_allows_single_quoted_command(tmp_path):
+    """The recipe voice quotes the one defining command — that's fine."""
+    fence = "```bash\nuv run python -m exp.run --distill\n```\n"
+    text = TWO_AUDIENCE.replace("## What was run\n", "## What was run\n" + fence)
+    issues = lint.lint_file(_write(tmp_path, text))
+    assert not any(i.rule == "plumbing_outside" for i in issues)
+
+
+def test_comment_opener_inside_code_fence_is_display_text(tmp_path):
+    text = GOOD.replace("uv run python -m exp.run   # seeds 0,1,2",
+                        "uv run python -m exp.run   # seeds 0,1,2\n"
+                        "<!-- internal: shown as text, not a comment -->")
+    r = core.parse(_write(tmp_path, text))
+    assert not r.comment_spans and not r.has_internal_blocks
+
+
+def test_build_strips_internal_blocks(tmp_path):
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    _write(reports, TWO_AUDIENCE, "r.md")
+    html_text = ((reportly.build(reports)) / "r.html").read_text()
+    assert "make_figure" not in html_text      # internal command never reaches HTML
+    assert "<!--" not in html_text             # not even as an HTML comment
+
+
+def test_build_internal_flag_renders_admonitions(tmp_path):
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    _write(reports, TWO_AUDIENCE, "r.md")
+    out = reportly.build(reports, tmp_path / "site-internal", internal=True)
+    html_text = (out / "r.html").read_text()
+    assert "make_figure" in html_text and "internal" in html_text
+
+
+def test_scaffold_is_two_audience(tmp_path):
+    out = reportly.scaffold("my-exp", tmp_path / "reports")
+    text = out.read_text()
+    assert text.index("<!-- internal: two-audience convention") < text.index("\n# ")
+    assert "<!-- internal: Reproduce" in text
+    r = core.parse(out)
+    assert r.has_internal_blocks
+
+
 def test_code_fence_headings_ignored(tmp_path):
     """A '## Setup' inside a code fence must not satisfy the Setup requirement."""
     text = GOOD.replace(

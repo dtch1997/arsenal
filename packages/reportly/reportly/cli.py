@@ -62,7 +62,7 @@ def _cmd_lint(args) -> int:
 def _cmd_build(args) -> int:
     path = args.path or _load_config(".").reports_dir
     cfg = _load_config(path)
-    out = build_site(path, args.out, cfg)
+    out = build_site(path, args.out, cfg, internal=args.internal)
     n = len(list(Path(out).glob("*.html"))) - 1  # minus index.html
     print(f"rendered {max(n, 0)} report(s) -> {Path(out) / 'index.html'}")
     return 0
@@ -92,9 +92,13 @@ def main(argv=None) -> int:
                     help="print warnings even when they don't fail the lint")
     sp.set_defaults(func=_cmd_lint)
 
-    sp = sub.add_parser("build", help="render md -> html + index")
+    sp = sub.add_parser("build", help="render md -> html + index "
+                        "(<!-- internal: --> blocks are stripped)")
     sp.add_argument("path", nargs="?", help="reports dir (default: from config)")
     sp.add_argument("--out", help="output directory (default: in place)")
+    sp.add_argument("--internal", action="store_true",
+                    help="render internal comment blocks as visible admonitions "
+                         "(for internal review; don't publish this output)")
     sp.set_defaults(func=_cmd_build)
 
     args = p.parse_args(argv)

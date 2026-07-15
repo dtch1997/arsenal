@@ -7,6 +7,14 @@ as a sentence, answers cite evidence, the answer sheet leads, a provenance foote
 is present, Evidence leads with a figure). Whether warnings *fail* the lint is
 controlled by ``config.level`` (``"error"`` vs ``"warn"``).
 
+Rules are layer-aware (the two-audience convention, REPORTING.md): *rendered*
+checks (thesis H1, the answer sheet, evidence figures, section ordering, most
+required sections) must hold with ``<!-- internal: -->`` comment blocks
+stripped — content hiding in a comment can't satisfy them; *whole-file* checks
+(Reproduce commands, provenance footer, figure files existing, and the section
+kinds in ``config.internal_ok``) accept either layer, since plumbing
+conventionally lives in comments.
+
 These are the *mechanical* guarantees of the standard; the content rubric they
 serialize lives in ``REPORTING.md``.
 """
@@ -36,8 +44,10 @@ class Issue:
         return f"{loc}: {self.severity.upper()} [{self.rule}] {self.message}"
 
 
-def _has_section(report: core.Report, aliases: list[str]) -> bool:
-    return any(any(a in anc.norm for a in aliases) for anc in report.anchors)
+def _has_section(report: core.Report, aliases: list[str],
+                 anchors: list[core.Anchor] | None = None) -> bool:
+    anchors = report.anchors if anchors is None else anchors
+    return any(any(a in anc.norm for a in aliases) for anc in anchors)
 
 
 _TABLE_ROW = re.compile(r"^\s*\|?[ :|-]*-{1,}[ :|-]*\|", re.M)
@@ -49,16 +59,20 @@ _QUESTION_LEAD = re.compile(r"\s*\*\*(?P<q>q\d+\b[^*]*?)\*\*[ \t]*\n?(?P<a>.*)",
 _EVIDENCE_HINT = re.compile(r"\bfig|\btab(le)?\b|\]\(|§|not answered", re.I)
 
 
-def _section_span(report: core.Report, head: core.Anchor) -> str:
-    """Body text of a section: from a heading to the next heading of <= its level."""
+def _rendered_span(report: core.Report, head: core.Anchor) -> str:
+    """Rendered body text of a section: from a heading to the next *rendered*
+    heading of <= its level, with internal-layer (commented) lines blanked so
+    content hiding in a comment can't satisfy a rendered-projection check."""
     lines = report.body.splitlines()
     start = head.line  # 1-based; content begins on the next line
     end = len(lines)
     for a in report.anchors:
-        if a.level >= 1 and a.level <= head.level and a.line > head.line:
+        if (a.level >= 1 and a.level <= head.level and a.line > head.line
+                and not report.in_comment(a.line)):
             end = a.line - 1
             break
-    return "\n".join(lines[start:end])
+    return "\n".join("" if report.in_comment(start + 1 + i) else ln
+                     for i, ln in enumerate(lines[start:end]))
 
 
 def _paragraphs(span: str, first_line: int):
@@ -77,15 +91,15 @@ def _paragraphs(span: str, first_line: int):
         yield start, "\n".join(cur)
 
 
-def _first_heading(report: core.Report, aliases: list[str]) -> core.Anchor | None:
-    return next((a for a in report.anchors
+def _first_heading(anchors: list[core.Anchor], aliases: list[str]) -> core.Anchor | None:
+    return next((a for a in anchors
                  if a.level >= 1 and any(al in a.norm for al in aliases)), None)
 
 
 # --- individual rules: each takes (report, config) -> Iterable[Issue] ----------
 
 def _rule_thesis_h1(r: core.Report, c: Config):
-    h1s = r.headings(level=1)
+    h1s = [a for a in r.rendered_anchors() if a.level == 1]
     if not h1s:
         yield Issue(r.path, "thesis_h1", ERROR, "no H1 title found")
         return
@@ -114,8 +128,12 @@ def _rule_frontmatter(r: core.Report, c: Config):
 
 
 def _rule_required_sections(r: core.Report, c: Config):
+    rendered = r.rendered_anchors()
     for kind in c.required:
-        if not _has_section(r, c.aliases(kind)):
+        # Plumbing kinds (internal_ok) may satisfy from a comment block;
+        # everything else must exist in the rendered projection.
+        anchors = r.anchors if kind in c.internal_ok else rendered
+        if not _has_section(r, c.aliases(kind), anchors):
             yield Issue(r.path, "required_sections", ERROR,
                         f"missing required section: {kind} "
                         f"(any of: {', '.join(c.aliases(kind))})")
@@ -125,11 +143,11 @@ def _rule_questions_answered(r: core.Report, c: Config):
     """The answer sheet: >= 1 ``**Qn. …?**`` item, each answered in the same
     paragraph (\"Not answered — <why>\" counts), each answer citing evidence."""
     aliases = c.aliases("questions")
-    heads = [a for a in r.anchors if any(al in a.norm for al in aliases)]
+    heads = [a for a in r.rendered_anchors() if any(al in a.norm for al in aliases)]
     if not heads:
         return  # a missing section is already covered by required_sections
     head = next((h for h in heads if h.level >= 1), heads[0])
-    span = _section_span(r, head)
+    span = _rendered_span(r, head)
 
     found = 0
     for start, para in _paragraphs(span, head.line + 1):
@@ -155,8 +173,9 @@ def _rule_questions_answered(r: core.Report, c: Config):
 
 def _rule_answers_first(r: core.Report, c: Config):
     """Convention: the answer sheet leads; What-was-run/Setup comes after."""
-    q = _first_heading(r, c.aliases("questions"))
-    s = _first_heading(r, c.aliases("setup"))
+    rendered = r.rendered_anchors()
+    q = _first_heading(rendered, c.aliases("questions"))
+    s = _first_heading(rendered, c.aliases("setup"))
     if q and s and s.line < q.line:
         yield Issue(r.path, "answers_first", WARN,
                     "paper-order: Setup/What-was-run appears before the Questions "
@@ -165,8 +184,10 @@ def _rule_answers_first(r: core.Report, c: Config):
 
 
 def _rule_reproduce_commands(r: core.Report, c: Config):
-    # Only meaningful when a Reproduce section actually exists; a missing section
-    # is already covered by the required_sections rule.
+    # Whole-file check: the Reproduce section and its commands are plumbing, so
+    # both may live inside an <!-- internal: --> block. Only meaningful when a
+    # Reproduce section actually exists (either layer); a missing section is
+    # already covered by the required_sections rule.
     if not _has_section(r, c.aliases("reproduce")):
         return
     if not any(lang in ("bash", "sh", "shell", "console", "") and code.strip()
@@ -190,10 +211,10 @@ def _rule_result_figure(r: core.Report, c: Config):
     """Convention: each Evidence/Result section presents its evidence — a figure
     or a table."""
     result_aliases = c.aliases("result")
-    result_heads = [a for a in r.anchors if a.level >= 1
+    result_heads = [a for a in r.rendered_anchors() if a.level >= 1
                     and any(al in a.norm for al in result_aliases)]
     for head in result_heads:
-        span = _section_span(r, head)
+        span = _rendered_span(r, head)
         has_fig = "![" in span
         has_table = bool(_TABLE_ROW.search(span))
         if not (has_fig or has_table):
@@ -205,8 +226,15 @@ def _rule_result_figure(r: core.Report, c: Config):
 
 def _rule_provenance_footer(r: core.Report, c: Config):
     """Convention: an italic Branch/Model/Artifacts/Code line (it may sit before an
-    appendix, so scan the whole report rather than only the last paragraph)."""
-    for para in (p.strip() for p in r.body.split("\n\n") if p.strip()):
+    appendix, so scan the whole report rather than only the last paragraph).
+    Whole-file check: the footer is plumbing, so it may live inside an
+    <!-- internal: --> block — scan comment inners too."""
+    candidates = [p for p in r.body.split("\n\n")]
+    # comment inners, per paragraph and per line (a footer often sits directly
+    # under the block's ``internal: …`` label line, with no blank line between)
+    for _, inner in r.comments:
+        candidates += inner.split("\n\n") + inner.splitlines()
+    for para in (p.strip() for p in candidates if p.strip()):
         italic = (para.startswith("*") and para.rstrip().endswith("*")
                   and not para.startswith("**"))
         mentions = sum(k in para.lower() for k in ("branch", "artifact", "code", "model"))
@@ -215,6 +243,27 @@ def _rule_provenance_footer(r: core.Report, c: Config):
     yield Issue(r.path, "provenance_footer", WARN,
                 "missing provenance footer (italic line naming "
                 "Branch / Model / Artifacts / Code)")
+
+
+def _rule_plumbing_outside(r: core.Report, c: Config):
+    """Two-audience convention: once a report carries <!-- internal: --> blocks,
+    Reproduce-style multi-command fences belong inside them, not in rendered
+    prose. Scoped narrowly — the recipe voice legitimately quotes the one
+    command or input that defines the method, so single-command fences (and
+    reports that don't use internal blocks at all) never warn."""
+    if not r.has_internal_blocks:
+        return
+    for lang, code, line in r.code_blocks:
+        if lang not in ("bash", "sh", "shell", "console") or r.in_comment(line):
+            continue
+        commands = [ln for ln in code.splitlines()
+                    if ln.strip() and not ln.strip().startswith("#")]
+        if len(commands) >= 2:
+            yield Issue(r.path, "plumbing_outside", WARN,
+                        f"{len(commands)}-command fence in rendered prose; this "
+                        "report uses internal blocks — move plumbing into an "
+                        "<!-- internal: --> block (quoting one defining command "
+                        "in the rendered text is fine)", line=line)
 
 
 RULES = [
@@ -227,6 +276,7 @@ RULES = [
     _rule_figures_exist,
     _rule_result_figure,
     _rule_provenance_footer,
+    _rule_plumbing_outside,
 ]
 
 
