@@ -1967,7 +1967,7 @@ wheels = [
 
 [[package]]
 name = "reportly"
-version = "0.2.0"
+version = "0.3.0"
 source = { editable = "packages/reportly" }
 dependencies = [
     { name = "markdown-it-py" },

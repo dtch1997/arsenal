@@ -1,6 +1,6 @@
 # Proposal: two-audience reports + method-as-recipe voice
 
-Status: **accepted — implemented in this PR** (reportly 0.2.0: comment-aware
+Status: **accepted — implemented in this PR** (reportly 0.3.0: comment-aware
 core + layer-split lint + `plumbing_outside`, build strips comments /
 `--internal` admonition mode, two-audience scaffold, REPORTING.md sections;
 both open questions resolved as suggested below). Researcher-originated, from
