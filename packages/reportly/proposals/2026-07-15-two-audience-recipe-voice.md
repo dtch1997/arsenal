@@ -42,6 +42,15 @@ section they support** — visible to anyone reading the markdown source
   file. The external rendering is a projection, not a different report.
 - Bonus: when a report graduates to a public write-up, the external version
   already exists — render it; no scrubbing pass.
+- **Caveat — comments hide, they don't protect.** The internal layer is
+  invisible in renders but sits in plaintext in the markdown source. The
+  no-scrubbing guarantee holds only when what goes public is the rendered
+  HTML; if the *source* ever becomes public (a repo flipped public, Pages
+  serving raw markdown), every internal block — spend accounting,
+  checkpoint pointers, internal PR numbers — leaks. This convention assumes
+  the current setup (private repos, gated Pages). To make the guarantee
+  mechanical rather than conventional, `reportly build` should strip
+  comment blocks from any external output path.
 
 ## Convention 2 — method as a first-person recipe
 
@@ -65,14 +74,28 @@ path into the reader's head.
    narrative-vs-recipe distinction). "The reader" section is reframed: the
    *internal layer* is written for the PI; the *rendered projection* is
    written for an external colleague.
-2. **`reportly lint`** learns to look inside `<!-- internal: -->` blocks:
-   the Reproduce-fenced-commands and provenance-footer checks must accept
-   those sections living in comment blocks (today they would fail on a
-   compliant two-audience report). New warning: fenced shell commands or
-   config-key runs in *rendered* prose ("plumbing outside").
+2. **`reportly` core + lint become comment-aware.** Today the parser
+   (`core.py`) blanks fenced code but is blind to HTML comments, so
+   content inside `<!-- internal: -->` blocks is parsed as if it were
+   rendered. The failure mode is therefore not that a two-audience report
+   fails lint — it mostly passes, *silently*: a `## Reproduce` heading, a
+   figure, or a provenance footer inside a comment block satisfies its
+   check even though the rendered projection is missing that element. The
+   real work item is to teach `core.py` to segment comment regions (the
+   same way it blanks fences), then assign each rule a layer: whole-file
+   checks (Reproduce commands, provenance footer — comment placement is
+   compliant) versus rendered-projection checks (answer sheet, evidence
+   anchors, result figures — must hold with comments stripped). New
+   warning on the rendered layer: "plumbing outside" for Reproduce-style
+   multi-command fenced blocks or config-key runs in rendered prose —
+   scoped narrowly, since convention 2 encourages quoting the one command
+   or input that defines the method.
 3. **`reportly scaffold`** emits the convention-stating comment block at
    the top of new reports and an empty `<!-- internal: Reproduce — … -->`
    stub.
+4. **`reportly build`** strips comment blocks from external output (don't
+   rely on the HTML renderer happening to hide them), making the
+   no-scrubbing guarantee mechanical.
 
 ## Open questions
 
