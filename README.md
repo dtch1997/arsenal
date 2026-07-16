@@ -12,6 +12,7 @@ together.
 | [`ferry`](packages/ferry) | bytes ↔ GCS: `push`/`pull`/`Remote` by path (rclone) + `ferry.cas` content-addressed store (dist name `ferry-sync`) |
 | [`databrowser`](packages/databrowser) | JSONL → static HTML browser, served through the lobby hub |
 | [`arxivist`](packages/arxivist) | arXiv papers → structured, agent-legible markdown (native-HTML-first parse, PDF fallback, outline/section CLI) |
+| [`foyer`](packages/foyer) | web front door for the tmux sessions your agents live in: session sidebar + live terminal (websocket PTY bridge) + plots/notes panes, own tunnel via `lobby.tunnel` |
 
 More tools migrate in as waves: stagehand, cowrite, cairn, reportly,
 bellhop, then concierge. Histories were preserved on merge
