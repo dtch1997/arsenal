@@ -94,6 +94,15 @@ class PodConfig:
     # here it's a post-ready `python3 -m pip install`). Pre-flight conflicts
     # locally (`uv pip compile`) before burning pod-hours on a bad pin set.
     pip: list[str] = field(default_factory=list)
+    # Container start command override (single shell command string). Lets
+    # non-RunPod images (which don't consume PUBLIC_KEY or start sshd) work as
+    # ssh job pods — e.g. bootstrap sshd and block:
+    #   "apt-get update && apt-get install -y openssh-server && mkdir -p /run/sshd ~/.ssh
+    #    && echo \"$PUBLIC_KEY\" > ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
+    #    && /usr/sbin/sshd -D"
+    # The command IS the container's main process: it must block (sshd -D,
+    # sleep infinity) or the pod exits and crashloops.
+    docker_start_cmd: str | None = None
     name: str = "bellhop"
     # auth / connection
     ssh_key: str | None = None             # private key; default ~/.ssh/id_ed25519
@@ -178,6 +187,8 @@ class PodConfig:
             "ports": self.ports,
             "env": env,
         }
+        if self.docker_start_cmd:
+            body["dockerStartCmd"] = ["bash", "-c", self.docker_start_cmd]
         if self.resolved_compute == "gpu":
             body["gpuTypeIds"] = self.resolve_gpu_ids()
             body["gpuCount"] = self.gpu_count
@@ -212,6 +223,9 @@ class PodConfig:
             "ports": ",".join(self.ports),
             "env": [{"key": k, "value": v} for k, v in env.items()],
         }
+        if self.docker_start_cmd:
+            # GraphQL's dockerArgs is the single-string spelling of REST's dockerStartCmd
+            inp["dockerArgs"] = f"bash -c {shlex.quote(self.docker_start_cmd)}"
         if self.volume_gb:
             inp["volumeInGb"] = self.volume_gb
             inp["volumeMountPath"] = self.volume_mount_path
