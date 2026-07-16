@@ -5,3 +5,10 @@ members = ["packages/*"]
 
 [dependency-groups]
 dev = ["pytest>=8"]
+
+# Whole-workspace runs (`pytest packages/*/tests`) resolve config here, not in
+# the per-package pyprojects, so markers must be registered in both places.
+[tool.pytest.ini_options]
+markers = [
+    "integration: hits a real rclone remote / GCS bucket; deselect with -m 'not integration'",
+]

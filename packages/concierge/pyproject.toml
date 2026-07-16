@@ -1,7 +1,7 @@
 [project]
 name = "concierge"
-version = "0.0.1"
-description = "Worker pool over headless Claude sessions (prototype; see SPEC.md)"
+version = "0.1.0"
+description = "Worker pool over headless Claude sessions (see SPEC.md)"
 requires-python = ">=3.10"
 dependencies = ["claude-agent-sdk>=0.2", "pyyaml>=6"]
 
