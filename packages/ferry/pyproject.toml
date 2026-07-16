@@ -22,3 +22,8 @@ ferry = "ferry.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ferry"]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: hits a real rclone remote / GCS bucket; deselect with -m 'not integration'",
+]
