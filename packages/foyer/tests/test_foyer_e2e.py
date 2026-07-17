@@ -31,11 +31,14 @@ def _free_port() -> int:
 
 
 @pytest.fixture()
-def env(tmp_path):
+def env(tmp_path, request):
+    # Socket unique per test, not just per run: consecutive tests sharing a
+    # socket race new-session against the previous teardown's kill-server.
+    sock = f"foyer-pytest-{os.getpid()}-{abs(hash(request.node.name)) % 10**6}"
     e = {
         **os.environ,
         "FOYER_HOME": str(tmp_path / "foyer-home"),
-        "FOYER_TMUX": f"tmux -L foyer-pytest-{os.getpid()}",
+        "FOYER_TMUX": f"tmux -L {sock}",
     }
     tmux = e["FOYER_TMUX"].split()
     subprocess.run([*tmux, "new-session", "-d", "-s", SESSION, "-c", str(tmp_path)],
