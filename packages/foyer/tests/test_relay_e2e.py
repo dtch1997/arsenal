@@ -54,29 +54,44 @@ def stack(tmp_path):
     subprocess.run([*tmux, "new-session", "-d", "-s", SESSION, "-c", str(tmp_path)],
                    check=True)
     foyer_port, relay_port = _free_port(), _free_port()
+    relay_holder = {}
     foyer_proc = subprocess.Popen(
         [sys.executable, "-m", "foyer.cli", "serve",
          "--port", str(foyer_port), "--no-tunnel"],
         env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
     )
-    relay_env = {**env, "RELAY_PORT": str(relay_port), "RELAY_TOKEN": "relay-secret"}
+    relay_env = {**env, "RELAY_PORT": str(relay_port), "RELAY_TOKEN": "relay-secret",
+                 "RELAY_TARGET_FILE": str(tmp_path / "relay_target.json")}
     relay_proc = subprocess.Popen(
         [sys.executable, "-m", "foyer.relay_httpd"],
         env=relay_env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
     )
     _wait_port(foyer_port)
     _wait_port(relay_port)
+    relay_holder["proc"] = relay_proc
+
+    def restart_relay():
+        relay_holder["proc"].terminate()
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            relay_holder["proc"].wait(timeout=10)
+        relay_holder["proc"] = subprocess.Popen(
+            [sys.executable, "-m", "foyer.relay_httpd"],
+            env=relay_env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        )
+        _wait_port(relay_port)
+
     token = open(os.path.join(env["FOYER_HOME"], "token")).read().strip()
     try:
         yield {
             "relay": f"http://127.0.0.1:{relay_port}",
             "target": f"http://127.0.0.1:{foyer_port}",
             "token": token,
+            "restart_relay": restart_relay,
         }
     finally:
-        for p in (relay_proc, foyer_proc):
+        for p in (relay_holder["proc"], foyer_proc):
             p.terminate()
-        for p in (relay_proc, foyer_proc):
+        for p in (relay_holder["proc"], foyer_proc):
             with contextlib.suppress(subprocess.TimeoutExpired):
                 p.wait(timeout=10)
         subprocess.run([*tmux, "kill-server"], capture_output=True)
@@ -137,6 +152,20 @@ def test_relay_forwarding_and_websocket(stack):
                                 if b"polo-7" in got:
                                     break
             assert b"polo-7" in got
+
+            # ping exposes a target fingerprint for the devbox keeper
+            from foyer.relay import target_fp
+            r = await s.get(relay + "/_foyer/ping")
+            j = await r.json()
+            assert j["target_set"] is True and j["target_fp"] == target_fp(target)
+
+            # the target survives a relay restart (persisted to disk)
+            stack["restart_relay"]()
+            r = await s.get(relay + "/_foyer/ping")
+            j = await r.json()
+            assert j["target_set"] is True and j["target_fp"] == target_fp(target)
+            r = await s.get(relay + "/api/sessions")
+            assert r.status == 200  # still forwarding after restart
 
             # unset target -> back to 503
             r = await s.post(relay + "/_foyer/target", json={"url": ""},

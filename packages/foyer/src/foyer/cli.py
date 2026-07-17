@@ -25,6 +25,8 @@ def _tokened(base: str, token: str) -> str:
 
 
 def serve(port: int, host: str, use_tunnel: bool) -> None:
+    import asyncio
+
     from . import relay
 
     token = load_token()
@@ -41,6 +43,33 @@ def serve(port: int, host: str, use_tunnel: bool) -> None:
         except relay.RelayError as e:
             print(f"foyer: relay publish failed ({e}); "
                   "falling back to the tunnel URL", flush=True)
+
+        # Keeper: the relay pod can restart (losing or staling its target);
+        # re-publish whenever its ping stops matching our tunnel URL.
+        def _keeper_check() -> None:
+            cfg = relay.config()
+            if not cfg:
+                return
+            info = relay.ping(relay.stable_url(cfg["pod_id"]))
+            if info is None or info.get("target_fp") == relay.target_fp(public):
+                return
+            try:
+                relay.publish(public, attempts=1)
+                print("foyer: keeper re-published the tunnel to the relay",
+                      flush=True)
+            except relay.RelayError as e:
+                print(f"foyer: keeper publish failed ({e})", flush=True)
+
+        async def _keeper_ctx(app):
+            async def loop():
+                while True:
+                    await asyncio.sleep(60)
+                    await asyncio.to_thread(_keeper_check)
+            task = asyncio.get_running_loop().create_task(loop())
+            yield
+            task.cancel()
+
+        app.cleanup_ctx.append(_keeper_ctx)
     STATE.write_text(json.dumps(
         {"url": public, "stable_url": stable, "port": port,
          "pid": os.getpid(), "started_at": time.time()}
@@ -75,6 +104,11 @@ def relay_cmd(action: str) -> None:
         base = relay.up()
         print(f"foyer: relay ready at {base}")
         print("foyer: restart `foyer serve` to publish the tunnel to it")
+    elif action == "redeploy":
+        base = relay.redeploy()
+        print(f"foyer: relay redeployed at {base} (same URL)")
+        print("foyer: the serve keeper will re-publish the tunnel within a "
+              "minute (or restart `foyer serve`)")
     elif action == "status":
         cfg = relay.config()
         if not cfg:
@@ -106,7 +140,7 @@ def main() -> None:
     sub.add_parser("url", help="print the current tokened URL")
     sub.add_parser("token", help="print the auth token")
     pr = sub.add_parser("relay", help="manage the stable-URL relay pod")
-    pr.add_argument("action", choices=["up", "status", "delete"])
+    pr.add_argument("action", choices=["up", "status", "redeploy", "delete"])
     args = p.parse_args()
     if args.cmd == "serve":
         serve(args.port, args.host, use_tunnel=not args.no_tunnel)

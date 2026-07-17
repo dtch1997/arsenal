@@ -27,6 +27,7 @@ foyer serve --no-tunnel    # localhost only (ssh -L it yourself)
 foyer url                  # reprint the current tokened URL (stable one if relayed)
 foyer token                # print the auth token
 foyer relay up             # one-time: provision the stable-URL relay pod
+foyer relay redeploy       # push new relay code to the SAME pod (URL unchanged)
 foyer relay status|delete
 ```
 
@@ -39,6 +40,11 @@ command) whose `https://<pod-id>-8080.proxy.runpod.net` address never
 changes. On every `foyer serve`, the devbox publishes its fresh quick-tunnel
 URL to the relay's bearer-token control endpoint, and the pod forwards all
 traffic there.
+
+The pair is self-healing: the pod persists its target on disk (container
+restarts don't forget it) and its accept loop survives anything, while
+`foyer serve` runs a keeper that pings every minute and re-publishes whenever
+the relay's target fingerprint stops matching the live tunnel.
 
 The pod-side forwarder (`relay_httpd.py`) is a deliberate *byte pump*, not an
 HTTP proxy: it rewrites the request head (`Host`, `Connection`) and then
