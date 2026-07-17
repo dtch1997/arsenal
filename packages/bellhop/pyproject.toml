@@ -2,7 +2,7 @@
 # Distribution name is bellhop-py ("bellhop" is squatted on PyPI by an
 # unrelated 2022 package); the import name and CLI remain `bellhop`.
 name = "bellhop-py"
-version = "0.6.0"
+version = "0.6.1"
 description = "Async Python library that checks your code into an ephemeral box (RunPod pod or Modal sandbox), runs it, brings the results back, and checks out."
 readme = "README.md"
 license = "MIT"
