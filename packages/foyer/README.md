@@ -24,9 +24,28 @@ that works from any device.
 ```
 foyer serve                # serve + own cloudflare quick tunnel, prints tokened URL
 foyer serve --no-tunnel    # localhost only (ssh -L it yourself)
-foyer url                  # reprint the current tokened URL
+foyer url                  # reprint the current tokened URL (stable one if relayed)
 foyer token                # print the auth token
+foyer relay up             # one-time: provision the stable-URL relay pod
+foyer relay status|delete
 ```
+
+## Stable URL (`foyer relay`)
+
+Quick tunnels mint a new random URL every restart. `foyer relay up`
+provisions a ~$0.03/hr always-on RunPod CPU pod (pattern cribbed from
+`lobby.wiki`: REST-created, server code embedded base64 in the docker start
+command) whose `https://<pod-id>-8080.proxy.runpod.net` address never
+changes. On every `foyer serve`, the devbox publishes its fresh quick-tunnel
+URL to the relay's bearer-token control endpoint, and the pod forwards all
+traffic there.
+
+The pod-side forwarder (`relay_httpd.py`) is a deliberate *byte pump*, not an
+HTTP proxy: it rewrites the request head (`Host`, `Connection`) and then
+copies bytes both ways — a websocket after its handshake is just TCP, so the
+terminal flows through without the relay knowing what a websocket is. Since
+the browser only ever sees the stable domain, the auth cookie survives foyer
+restarts: enter the token once per device, ever.
 
 The printed URL carries `?t=<token>`; the first visit exchanges it for a
 cookie. **URL + token = shell access to your box** — treat it like a
