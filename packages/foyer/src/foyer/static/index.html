@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>foyer</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛎️</text></svg>">
+<link rel="stylesheet" href="/static/xterm.css">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="app">
+  <aside id="sidebar">
+    <div id="brand">🛎️ <span>foyer</span><button id="refresh" title="refresh sessions">⟳</button></div>
+    <div id="sessions"></div>
+  </aside>
+  <main id="main">
+    <div id="term-holder">
+      <div id="placeholder">
+        <div class="ph-inner">
+          <div class="ph-bell">🛎️</div>
+          <p>Pick a thread on the left.</p>
+        </div>
+      </div>
+      <div id="terminal"></div>
+      <div id="disconnected" class="hidden">
+        <button id="reconnect">reconnect</button>
+      </div>
+    </div>
+  </main>
+  <section id="panel" class="collapsed">
+    <div id="panel-tabs">
+      <button data-tab="plots" class="tab active">Plots</button>
+      <button data-tab="notes" class="tab">Notes</button>
+      <button id="panel-toggle" title="toggle panel">⇥</button>
+    </div>
+    <div id="panel-body">
+      <div id="plots" class="pane active">
+        <div id="plots-rootbar">
+          <input id="plot-root" spellcheck="false"
+                 placeholder="plot directory (default: thread cwd)"
+                 title="directory to scan for this thread's plots — Enter to set, clear to reset">
+          <button id="plot-root-reset" title="reset to thread cwd">↺</button>
+        </div>
+        <div id="plots-meta"></div>
+        <div id="plots-grid"></div>
+      </div>
+      <div id="notes" class="pane">
+        <textarea id="notes-text" placeholder="Notes for this thread… (markdown, saved to ~/.foyer/notes/)" spellcheck="false"></textarea>
+        <div id="notes-status"></div>
+      </div>
+    </div>
+  </section>
+</div>
+<button id="panel-open" title="open side panel">◧</button>
+<div id="lightbox" class="hidden"><img id="lightbox-img" alt=""></div>
+<script src="/static/xterm.js"></script>
+<script src="/static/xterm-addon-fit.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

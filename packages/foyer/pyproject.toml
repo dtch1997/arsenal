@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "foyer"
+version = "0.1.0"
+description = "Walk in and see every JARVIS thread — a web front door for the tmux sessions your agents live in: session sidebar, live terminal, plots and notes panes."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Daniel Tan" }]
+keywords = ["tmux", "claude-code", "terminal", "xterm", "dashboard", "cloudflare-tunnel"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Topic :: Terminals",
+]
+dependencies = [
+  "aiohttp>=3.9",
+  "lobby @ git+https://github.com/dtch1997/arsenal#subdirectory=packages/lobby",
+]
+
+[project.urls]
+Homepage = "https://github.com/dtch1997/arsenal"
+Repository = "https://github.com/dtch1997/arsenal"
+
+[project.scripts]
+foyer = "foyer.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/foyer"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.uv.sources]
+lobby = { workspace = true }
