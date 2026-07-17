@@ -36,6 +36,12 @@
     </div>
     <div id="panel-body">
       <div id="plots" class="pane active">
+        <div id="plots-rootbar">
+          <input id="plot-root" spellcheck="false"
+                 placeholder="plot directory (default: thread cwd)"
+                 title="directory to scan for this thread's plots — Enter to set, clear to reset">
+          <button id="plot-root-reset" title="reset to thread cwd">↺</button>
+        </div>
         <div id="plots-meta"></div>
         <div id="plots-grid"></div>
       </div>

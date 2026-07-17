@@ -50,7 +50,12 @@ password. Rotate by deleting `~/.foyer/token` and restarting.
   its live status there), and a `capture-pane` tail as the preview line.
 - **Notes** are plain markdown files in `~/.foyer/notes/<session>.md` —
   greppable, syncable, nothing proprietary.
-- **Plots** are just the newest images (depth ≤ 3, skipping dotdirs and
-  `node_modules`) under the thread's current working directory.
+- **Plots** are the newest images (depth ≤ 3, skipping dotdirs and
+  `node_modules`) under the thread's *plot root* — by default its current
+  working directory, overridable per thread from the Plots pane (persisted in
+  `~/.foyer/plotroots.json`); useful when several threads share a cwd.
+- **Thread order** is yours: drag cards in the sidebar to rearrange; the
+  order persists (`~/.foyer/order.json`) and unlisted/new sessions append
+  below, sorted by recency.
 
 xterm.js (+fit addon) is vendored under `static/` — no CDN at runtime.

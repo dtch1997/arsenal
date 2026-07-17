@@ -120,3 +120,45 @@ def test_auth_sessions_terminal_notes(server):
             assert r.status == 403
 
     asyncio.run(run())
+
+
+def test_order_and_plot_root(server, env):
+    aiohttp = pytest.importorskip("aiohttp")
+    base, token = server
+    tmux = env["FOYER_TMUX"].split()
+    other = f"{SESSION}-b"
+    subprocess.run([*tmux, "new-session", "-d", "-s", other], check=True)
+    plot_dir = os.path.join(os.path.expanduser("~"), ".cache", "foyer-pytest-root")
+    os.makedirs(plot_dir, exist_ok=True)
+
+    async def run():
+        jar = aiohttp.CookieJar(unsafe=True)
+        async with aiohttp.ClientSession(cookie_jar=jar) as s:
+            await s.get(base + f"/?t={token}")
+
+            # manual order wins over activity order
+            r = await s.put(base + "/api/order",
+                            json={"names": [other, SESSION]})
+            assert r.status == 200
+            r = await s.get(base + "/api/sessions")
+            names = [x["name"] for x in (await r.json())["sessions"]]
+            assert names[:2] == [other, SESSION]
+
+            # plot-root override: set, reject outside $HOME, reset
+            r = await s.put(base + f"/api/plotroot/{SESSION}",
+                            json={"root": plot_dir})
+            assert r.status == 200 and (await r.json())["override"] is True
+            r = await s.get(base + f"/api/plots?session={SESSION}")
+            j = await r.json()
+            assert j["root"] == plot_dir and j["override"] is True
+            r = await s.put(base + f"/api/plotroot/{SESSION}",
+                            json={"root": "/etc"})
+            assert r.status == 400
+            r = await s.put(base + f"/api/plotroot/{SESSION}",
+                            json={"root": ""})
+            assert r.status == 200 and (await r.json())["override"] is False
+
+    try:
+        asyncio.run(run())
+    finally:
+        os.rmdir(plot_dir)

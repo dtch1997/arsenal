@@ -4,7 +4,7 @@
 const $ = (id) => document.getElementById(id);
 const state = {
   sessions: [], active: null, ws: null, lastJson: "",
-  notesTimer: null, notesSeq: 0, plotsVisible: false,
+  notesTimer: null, notesSeq: 0, plotsVisible: false, dragging: null,
 };
 
 /* --- terminal ------------------------------------------------------------ */
@@ -87,11 +87,60 @@ function renderSessions() {
     card.querySelector(".meta").textContent = `${s.dir}  ·  ${title}`;
     card.querySelector(".snippet").textContent = last;
     card.onclick = () => attach(s.name);
+    wireDrag(card, s.name);
     box.appendChild(card);
   }
 }
 
+/* drag-and-drop reordering; the order is persisted server-side */
+function wireDrag(card, name) {
+  card.draggable = true;
+  card.ondragstart = (e) => {
+    state.dragging = name;
+    e.dataTransfer.effectAllowed = "move";
+    setTimeout(() => card.classList.add("dragging"), 0);
+  };
+  card.ondragend = () => {
+    state.dragging = null;
+    card.classList.remove("dragging");
+    clearDropMarks();
+  };
+  card.ondragover = (e) => {
+    if (!state.dragging || state.dragging === name) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    clearDropMarks();
+    const before = e.offsetY < card.offsetHeight / 2;
+    card.classList.add(before ? "drop-above" : "drop-below");
+  };
+  card.ondrop = async (e) => {
+    e.preventDefault();
+    const from = state.dragging;
+    if (!from || from === name) return;
+    const before = e.offsetY < card.offsetHeight / 2;
+    clearDropMarks();
+    const names = state.sessions.map((s) => s.name).filter((n) => n !== from);
+    const at = names.indexOf(name) + (before ? 0 : 1);
+    names.splice(at, 0, from);
+    state.sessions.sort((a, b) => names.indexOf(a.name) - names.indexOf(b.name));
+    state.lastJson = "";
+    renderSessions();
+    try {
+      await fetch("/api/order", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ names }),
+      });
+    } catch (err) { /* order re-syncs on next refresh */ }
+  };
+}
+function clearDropMarks() {
+  document.querySelectorAll(".drop-above,.drop-below")
+    .forEach((c) => c.classList.remove("drop-above", "drop-below"));
+}
+
 async function refreshSessions() {
+  if (state.dragging) return; // don't re-render mid-drag
   try {
     const r = await fetch("/api/sessions");
     if (!r.ok) return;
@@ -134,6 +183,14 @@ async function loadPlots() {
     const r = await fetch(`/api/plots?session=${encodeURIComponent(state.active)}`);
     if (!r.ok) return;
     const j = await r.json();
+    const rootInput = $("plot-root");
+    if (document.activeElement !== rootInput) {
+      rootInput.value = j.override ? j.root : "";
+      rootInput.placeholder = j.default_root
+        ? `plot directory (default: ${j.default_root})`
+        : "plot directory (default: thread cwd)";
+      rootInput.classList.toggle("override", j.override);
+    }
     $("plots-meta").textContent = j.root ? `newest images under ${j.root}` : "";
     const grid = $("plots-grid");
     grid.innerHTML = "";
@@ -160,6 +217,26 @@ async function loadPlots() {
     }
   } catch (e) { /* transient */ }
 }
+async function setPlotRoot(root) {
+  if (!state.active) return;
+  const r = await fetch(`/api/plotroot/${encodeURIComponent(state.active)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ root }),
+  });
+  if (!r.ok) {
+    $("plots-meta").textContent = await r.text();
+    return;
+  }
+  $("plot-root").blur();
+  loadPlots();
+}
+$("plot-root").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") setPlotRoot($("plot-root").value.trim());
+  if (e.key === "Escape") $("plot-root").blur();
+});
+$("plot-root-reset").onclick = () => setPlotRoot("");
+
 $("lightbox").onclick = () => $("lightbox").classList.add("hidden");
 setInterval(() => {
   if (state.plotsVisible && !$("panel").classList.contains("collapsed")) loadPlots();

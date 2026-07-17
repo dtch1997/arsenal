@@ -64,6 +64,23 @@ async def auth(request: web.Request, handler):
     )
 
 
+# --- tiny json state files under ~/.foyer ----------------------------------- #
+
+def _read_state(name: str) -> dict:
+    path = FOYER_HOME / name
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _write_state(name: str, obj: dict) -> None:
+    FOYER_HOME.mkdir(parents=True, exist_ok=True)
+    (FOYER_HOME / name).write_text(json.dumps(obj, indent=2))
+
+
 # --- pages & session API ---------------------------------------------------- #
 
 async def page(request: web.Request) -> web.FileResponse:
@@ -72,7 +89,21 @@ async def page(request: web.Request) -> web.FileResponse:
 
 async def api_sessions(request: web.Request) -> web.Response:
     rows = await asyncio.to_thread(sessions.list_sessions)
+    # Manual order first (drag-and-drop in the sidebar), then the rest by
+    # recency — so new sessions surface without disturbing the arrangement.
+    order = _read_state("order.json").get("names", [])
+    rank = {n: i for i, n in enumerate(order)}
+    rows.sort(key=lambda r: (rank.get(r["name"], len(order)), -r["activity"]))
     return web.json_response({"sessions": rows})
+
+
+async def api_order_put(request: web.Request) -> web.Response:
+    body = await request.json()
+    names = body.get("names")
+    if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+        raise web.HTTPBadRequest(text="order needs {names: [str, ...]}")
+    _write_state("order.json", {"names": names})
+    return web.json_response({"ok": True})
 
 
 # --- terminal bridge --------------------------------------------------------- #
@@ -202,17 +233,43 @@ def _find_images(root: Path, depth: int = 3, cap: int = 40) -> list[dict]:
     ]
 
 
-async def api_plots(request: web.Request) -> web.Response:
-    name = request.query.get("session", "")
-    rows = await asyncio.to_thread(sessions.list_sessions, False)
+def _default_plot_root(name: str) -> Path | None:
+    rows = sessions.list_sessions(with_preview=False)
     row = next((r for r in rows if r["name"] == name), None)
     if row is None or not row["cwd"]:
-        return web.json_response({"images": []})
-    root = Path(row["cwd"])
-    if not root.is_dir():
-        return web.json_response({"images": []})
-    images = await asyncio.to_thread(_find_images, root)
-    return web.json_response({"images": images, "root": str(root)})
+        return None
+    return Path(row["cwd"])
+
+
+async def api_plots(request: web.Request) -> web.Response:
+    name = request.query.get("session", "")
+    default = await asyncio.to_thread(_default_plot_root, name)
+    override = _read_state("plotroots.json").get(name)
+    root = Path(override) if override else default
+    resp = {"images": [], "root": str(root) if root else "",
+            "default_root": str(default) if default else "",
+            "override": bool(override)}
+    if root is None or not root.is_dir():
+        return web.json_response(resp)
+    resp["images"] = await asyncio.to_thread(_find_images, root)
+    return web.json_response(resp)
+
+
+async def api_plotroot_put(request: web.Request) -> web.Response:
+    name = request.match_info["session"]
+    body = await request.json()
+    raw = str(body.get("root", "")).strip()
+    roots = _read_state("plotroots.json")
+    if not raw:  # empty -> back to the thread's cwd
+        roots.pop(name, None)
+        _write_state("plotroots.json", roots)
+        return web.json_response({"ok": True, "override": False})
+    root = Path(raw).expanduser().resolve()
+    if not root.is_dir() or not root.is_relative_to(Path.home().resolve()):
+        raise web.HTTPBadRequest(text="plot root must be a directory under $HOME")
+    roots[name] = str(root)
+    _write_state("plotroots.json", roots)
+    return web.json_response({"ok": True, "override": True})
 
 
 async def api_file(request: web.Request) -> web.FileResponse:
@@ -233,6 +290,8 @@ def build_app(token: str | None = None) -> web.Application:
     app.router.add_get("/", page)
     app.router.add_get("/api/sessions", api_sessions)
     app.router.add_get("/api/plots", api_plots)
+    app.router.add_put("/api/plotroot/{session}", api_plotroot_put)
+    app.router.add_put("/api/order", api_order_put)
     app.router.add_get("/api/file", api_file)
     app.router.add_get("/api/notes/{session}", api_notes_get)
     app.router.add_put("/api/notes/{session}", api_notes_put)
