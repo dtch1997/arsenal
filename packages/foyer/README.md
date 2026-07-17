@@ -53,6 +53,14 @@ password. Rotate by deleting `~/.foyer/token` and restarting.
 
 ## Design notes
 
+- **Thread switching is instant** (after the first visit): the frontend keeps
+  one live terminal + websocket per recently-used thread (LRU, cap 8) and
+  switching just shows/hides them; the first ~8 threads are pre-warmed on
+  page load. Connection setup through the relay chain costs ~0.7s, so paying
+  it once per thread instead of per switch is the whole trick. Hidden
+  terminals stay laid out (`visibility: hidden`) so every attached foyer
+  client reports the same real size — a zero-size client would make tmux
+  letterbox the session for everyone.
 - **tmux stays the substrate.** foyer never creates or kills your sessions;
   each browser connection is just one more `tmux attach` client (SIGTERM'd →
   detached when the socket closes). Caveat: tmux sizes a window to its
