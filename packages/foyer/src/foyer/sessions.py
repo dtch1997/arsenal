@@ -74,6 +74,10 @@ def rename(old: str, new: str) -> None:
     _tmux("rename-session", "-t", f"={old}", new)
 
 
+def kill(name: str) -> None:
+    _tmux("kill-session", "-t", f"={name}")
+
+
 def preview(name: str, lines: int = 6) -> list[str]:
     """Last few non-empty screen lines of the session's active pane.
 

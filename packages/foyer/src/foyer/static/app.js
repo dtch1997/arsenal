@@ -156,6 +156,7 @@ function renderSessions() {
         <span class="name"></span>
         ${s.attached ? '<span class="badge">tty</span>' : ""}
         <span class="ago">${ago(s.activity)}</span>
+        <button class="kill" title="kill this thread (tmux session)">✕</button>
       </div>
       <div class="meta"></div>
       <div class="snippet"></div>`;
@@ -166,9 +167,39 @@ function renderSessions() {
     card.querySelector(".snippet").textContent = last;
     card.onclick = () => attach(s.name);
     nameEl.ondblclick = (e) => { e.stopPropagation(); startRename(nameEl, s.name); };
+    wireKill(card.querySelector(".kill"), s.name);
     wireDrag(card, s.name);
     box.appendChild(card);
   }
+}
+
+/* two-stage kill: first click arms ("sure?"), second within 3s kills */
+function wireKill(btn, name) {
+  btn.onclick = async (e) => {
+    e.stopPropagation();
+    if (!btn.classList.contains("armed")) {
+      btn.classList.add("armed");
+      btn.textContent = "sure?";
+      setTimeout(() => {
+        btn.classList.remove("armed");
+        btn.textContent = "✕";
+      }, 3000);
+      return;
+    }
+    const r = await fetch(`/api/threads/${encodeURIComponent(name)}`,
+                          { method: "DELETE" });
+    if (!r.ok) { btn.title = await r.text(); return; }
+    const entry = terms.get(name);
+    if (entry) disposeEntry(entry);
+    if (state.active === name) {
+      state.active = null;
+      document.title = "foyer";
+      $("placeholder").classList.remove("hidden");
+      $("disconnected").classList.add("hidden");
+    }
+    state.lastJson = "";
+    refreshSessions();
+  };
 }
 
 /* inline rename: double-click a thread's name, Enter commits, Esc cancels */

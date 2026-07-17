@@ -219,6 +219,23 @@ def test_thread_create_and_rename(server, env):
                              json={"name": "whatever"})
             assert r.status == 404
 
+            # delete: session gone, order/plotroot cleaned, notes kept
+            r = await s.put(base + "/api/plotroot/renamed-thread",
+                            json={"root": ws_dir})
+            assert r.status == 200
+            r = await s.put(base + "/api/order",
+                            json={"names": ["renamed-thread", SESSION]})
+            assert r.status == 200
+            r = await s.delete(base + "/api/threads/renamed-thread")
+            assert r.status == 200
+            r = await s.get(base + "/api/sessions")
+            names = [x["name"] for x in (await r.json())["sessions"]]
+            assert "renamed-thread" not in names
+            r = await s.delete(base + "/api/threads/renamed-thread")
+            assert r.status == 404
+            r = await s.get(base + "/api/notes/renamed-thread")
+            assert (await r.json())["text"] == "keep me"
+
     try:
         asyncio.run(run())
     finally:
