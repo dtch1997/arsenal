@@ -76,5 +76,12 @@ password. Rotate by deleting `~/.foyer/token` and restarting.
 - **Thread order** is yours: drag cards in the sidebar to rearrange; the
   order persists (`~/.foyer/order.json`) and unlisted/new sessions append
   below, sorted by recency.
+- **Threads are born and renamed in the UI.** "＋ new thread" creates a
+  detached tmux session in the configured workspace and types the configured
+  command into it (defaults: `$HOME` and `claude`; set
+  `~/.foyer/config.json` → `{"workspace": "~/jarvis", "command": "claude"}`).
+  The command goes in via send-keys so the shell — and the thread — survive
+  the program exiting. Double-click a thread's name to rename it; notes,
+  plot roots, and sidebar order follow the new name.
 
 xterm.js (+fit addon) is vendored under `static/` — no CDN at runtime.

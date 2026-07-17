@@ -106,6 +106,85 @@ async def api_order_put(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+# --- thread lifecycle -------------------------------------------------------- #
+
+_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,50}$")
+DEFAULT_CONFIG = {"workspace": str(Path.home()), "command": "claude"}
+
+
+def get_config() -> dict:
+    return {**DEFAULT_CONFIG, **_read_state("config.json")}
+
+
+def _check_dir(raw: str) -> Path:
+    path = Path(raw).expanduser().resolve()
+    if not path.is_dir() or not path.is_relative_to(Path.home().resolve()):
+        raise web.HTTPBadRequest(text="dir must be a directory under $HOME")
+    return path
+
+
+def _auto_name(base: str, taken: set[str]) -> str:
+    n = 1
+    while f"{base}-{n}" in taken:
+        n += 1
+    return f"{base}-{n}"
+
+
+async def api_config(request: web.Request) -> web.Response:
+    return web.json_response(get_config())
+
+
+async def api_thread_create(request: web.Request) -> web.Response:
+    body = await request.json()
+    cfg = get_config()
+    cwd = _check_dir(str(body.get("dir") or cfg["workspace"]))
+    taken = await asyncio.to_thread(sessions.names)
+    name = str(body.get("name") or "").strip()
+    if not name:
+        name = _auto_name(cwd.name or "thread", taken)
+    if not _NAME_RE.match(name):
+        raise web.HTTPBadRequest(
+            text="thread names are letters, digits, - and _ only")
+    if name in taken:
+        raise web.HTTPBadRequest(text=f"a thread named {name!r} already exists")
+    try:
+        await asyncio.to_thread(sessions.create, name, str(cwd), cfg["command"])
+    except RuntimeError as e:
+        raise web.HTTPBadRequest(text=str(e))
+    return web.json_response({"name": name})
+
+
+async def api_thread_rename(request: web.Request) -> web.Response:
+    old = request.match_info["session"]
+    body = await request.json()
+    new = str(body.get("name", "")).strip()
+    if not _NAME_RE.match(new):
+        raise web.HTTPBadRequest(
+            text="thread names are letters, digits, - and _ only")
+    taken = await asyncio.to_thread(sessions.names)
+    if old not in taken:
+        raise web.HTTPNotFound(text=f"no thread named {old!r}")
+    if new in taken:
+        raise web.HTTPBadRequest(text=f"a thread named {new!r} already exists")
+    try:
+        await asyncio.to_thread(sessions.rename, old, new)
+    except RuntimeError as e:
+        raise web.HTTPBadRequest(text=str(e))
+    # Per-thread state is keyed by name — carry it across the rename.
+    old_notes = _notes_path(old)
+    if old_notes.exists():
+        old_notes.rename(_notes_path(new))
+    roots = _read_state("plotroots.json")
+    if old in roots:
+        roots[new] = roots.pop(old)
+        _write_state("plotroots.json", roots)
+    order = _read_state("order.json")
+    if old in order.get("names", []):
+        order["names"] = [new if n == old else n for n in order["names"]]
+        _write_state("order.json", order)
+    return web.json_response({"name": new})
+
+
 # --- terminal bridge --------------------------------------------------------- #
 
 async def ws_terminal(request: web.Request) -> web.WebSocketResponse:
@@ -289,6 +368,9 @@ def build_app(token: str | None = None) -> web.Application:
     app["token"] = token or load_token()
     app.router.add_get("/", page)
     app.router.add_get("/api/sessions", api_sessions)
+    app.router.add_get("/api/config", api_config)
+    app.router.add_post("/api/threads", api_thread_create)
+    app.router.add_post("/api/threads/{session}/rename", api_thread_rename)
     app.router.add_get("/api/plots", api_plots)
     app.router.add_put("/api/plotroot/{session}", api_plotroot_put)
     app.router.add_put("/api/order", api_order_put)

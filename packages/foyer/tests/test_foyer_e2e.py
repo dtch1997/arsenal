@@ -87,7 +87,10 @@ def test_auth_sessions_terminal_notes(server):
             assert r.status == 302
             r = await s.get(base + "/api/sessions")
             rows = (await r.json())["sessions"]
-            assert any(x["name"] == SESSION for x in rows)
+            mine = next(x for x in rows if x["name"] == SESSION)
+            # regression: `capture-pane -t =name` (no colon) silently fails on
+            # tmux 3.2a, leaving every preview empty
+            assert mine["preview"], "sidebar preview should capture the pane"
 
             got = b""
             async with s.ws_connect(base + f"/ws?target={SESSION}") as ws:
@@ -161,4 +164,59 @@ def test_order_and_plot_root(server, env):
     try:
         asyncio.run(run())
     finally:
-        os.rmdir(plot_dir)
+        shutil.rmtree(plot_dir, ignore_errors=True)
+
+
+def test_thread_create_and_rename(server, env):
+    aiohttp = pytest.importorskip("aiohttp")
+    base, token = server
+    ws_dir = os.path.join(os.path.expanduser("~"), ".cache", "foyer-pytest-ws")
+    os.makedirs(ws_dir, exist_ok=True)
+    # config: default workspace + a harmless command instead of `claude`
+    with open(os.path.join(env["FOYER_HOME"], "config.json"), "w") as f:
+        json.dump({"workspace": ws_dir, "command": "true"}, f)
+
+    async def run():
+        jar = aiohttp.CookieJar(unsafe=True)
+        async with aiohttp.ClientSession(cookie_jar=jar) as s:
+            await s.get(base + f"/?t={token}")
+
+            r = await s.get(base + "/api/config")
+            assert (await r.json())["workspace"] == ws_dir
+
+            # auto-named thread lands in the configured workspace
+            r = await s.post(base + "/api/threads", json={})
+            assert r.status == 200
+            made = (await r.json())["name"]
+            assert made == "foyer-pytest-ws-1"
+            r = await s.get(base + "/api/sessions")
+            rows = {x["name"]: x for x in (await r.json())["sessions"]}
+            assert rows[made]["cwd"] == ws_dir
+
+            # duplicates and bad names are refused
+            r = await s.post(base + "/api/threads", json={"name": made})
+            assert r.status == 400
+            r = await s.post(base + "/api/threads", json={"name": "bad:name"})
+            assert r.status == 400
+            r = await s.post(base + "/api/threads",
+                             json={"name": "x", "dir": "/etc"})
+            assert r.status == 400
+
+            # rename migrates per-thread state (notes)
+            await s.put(base + f"/api/notes/{made}", json={"text": "keep me"})
+            r = await s.post(base + f"/api/threads/{made}/rename",
+                             json={"name": "renamed-thread"})
+            assert r.status == 200
+            r = await s.get(base + "/api/sessions")
+            names = [x["name"] for x in (await r.json())["sessions"]]
+            assert "renamed-thread" in names and made not in names
+            r = await s.get(base + "/api/notes/renamed-thread")
+            assert (await r.json())["text"] == "keep me"
+            r = await s.post(base + "/api/threads/nope-xyz/rename",
+                             json={"name": "whatever"})
+            assert r.status == 404
+
+    try:
+        asyncio.run(run())
+    finally:
+        shutil.rmtree(ws_dir, ignore_errors=True)
