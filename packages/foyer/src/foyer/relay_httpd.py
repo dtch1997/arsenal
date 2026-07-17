@@ -24,17 +24,40 @@ relay token only guards target switching.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import socket
 import ssl
 import threading
+import traceback
 from urllib.parse import urlsplit
 
 PORT = int(os.environ.get("RELAY_PORT", "8080"))
 TOKEN = os.environ.get("RELAY_TOKEN", "")
+# The target survives container restarts on disk; env is only a first-boot
+# default. (The devbox keeper re-publishes anyway — this is the fast path.)
+TARGET_FILE = os.environ.get("RELAY_TARGET_FILE", "/data/relay_target.json")
 _state = {"target": os.environ.get("RELAY_TARGET", "")}
 _lock = threading.Lock()
+
+
+def _load_target() -> None:
+    try:
+        with open(TARGET_FILE) as f:
+            _state["target"] = str(json.load(f).get("url", ""))
+        print(f"foyer-relay: restored target {_state['target']!r}", flush=True)
+    except (OSError, json.JSONDecodeError):
+        pass
+
+
+def _save_target(url: str) -> None:
+    try:
+        os.makedirs(os.path.dirname(TARGET_FILE), exist_ok=True)
+        with open(TARGET_FILE, "w") as f:
+            json.dump({"url": url}, f)
+    except OSError as e:
+        print(f"foyer-relay: could not persist target: {e}", flush=True)
 
 MAX_HEAD = 65536
 IDLE_TIMEOUT = 600  # generous: foyer's websockets heartbeat every 30s
@@ -72,8 +95,11 @@ def _control(client: socket.socket, method: str, path: str,
     if path == "/_foyer/ping":
         with _lock:
             tgt = _state["target"]
+        # A fingerprint (not the URL — ping is unauthenticated) lets the
+        # devbox keeper detect a stale target and re-publish.
+        fp = hashlib.sha256(tgt.encode()).hexdigest()[:8] if tgt else ""
         return _respond(client, 200, json.dumps(
-            {"app": "foyer-relay", "target_set": bool(tgt)}),
+            {"app": "foyer-relay", "target_set": bool(tgt), "target_fp": fp}),
             "application/json")
     if path == "/_foyer/target" and method == "POST":
         auth = headers.get("authorization", "")
@@ -94,6 +120,8 @@ def _control(client: socket.socket, method: str, path: str,
             return _respond(client, 400, "url must be http(s)")
         with _lock:
             _state["target"] = url
+        _save_target(url)
+        print(f"foyer-relay: target -> {url!r}", flush=True)
         return _respond(client, 200, json.dumps({"ok": True}),
                         "application/json")
     _respond(client, 400, "unknown control path")
@@ -127,6 +155,17 @@ def _pump(src: socket.socket, dst: socket.socket) -> None:
 
 
 def _handle(client: socket.socket) -> None:
+    try:
+        _handle_inner(client)
+    except Exception:  # a broken request must never take a thread down noisily
+        traceback.print_exc()
+        try:
+            client.close()
+        except OSError:
+            pass
+
+
+def _handle_inner(client: socket.socket) -> None:
     upstream = None
     try:
         client.settimeout(IDLE_TIMEOUT)
@@ -188,14 +227,27 @@ def _handle(client: socket.socket) -> None:
 
 
 def main() -> None:
+    _load_target()
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(("0.0.0.0", PORT))
     srv.listen(64)
     print(f"foyer-relay: listening on :{PORT}", flush=True)
     while True:
-        client, _ = srv.accept()
-        threading.Thread(target=_handle, args=(client,), daemon=True).start()
+        # The accept loop is the process: it must survive anything.
+        try:
+            client, _ = srv.accept()
+        except OSError:
+            traceback.print_exc()
+            continue
+        try:
+            threading.Thread(target=_handle, args=(client,), daemon=True).start()
+        except RuntimeError:  # can't spawn (resource pressure) — shed load
+            traceback.print_exc()
+            try:
+                client.close()
+            except OSError:
+                pass
 
 
 if __name__ == "__main__":

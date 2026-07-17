@@ -1,5 +1,11 @@
 """Devbox-side plumbing for foyer's stable URL (see relay_httpd.py).
 
+Self-healing model: the pod persists its target on disk and never lets its
+accept loop die; the devbox (`foyer serve`) runs a keeper that pings every
+minute and re-publishes whenever the relay answers with a missing or stale
+target fingerprint. `redeploy()` swaps the embedded server code on the
+EXISTING pod (PATCH + restart) so the stable URL never changes.
+
 One cheap persistent RunPod CPU pod (pattern cribbed from ``lobby.wiki``):
 created via the REST API, server code delivered as an embedded base64 of
 ``relay_httpd.py`` in the docker start command — no image build, no boot-time
@@ -10,6 +16,7 @@ its current quick-tunnel URL to the relay on every start.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import secrets
@@ -104,6 +111,32 @@ def create_pod(token: str) -> str:
     if not pod_id:
         raise RelayError(f"could not parse pod id from create response: {created}")
     return pod_id
+
+
+def target_fp(url: str) -> str:
+    return hashlib.sha256(url.encode()).hexdigest()[:8] if url else ""
+
+
+def redeploy(wait: float = 900.0) -> str:
+    """Swap the embedded relay server on the existing pod — same id, same URL."""
+    cfg = config()
+    if not cfg:
+        raise RelayError("no relay configured — run `foyer relay up` first")
+    pod_id = cfg["pod_id"]
+    _rest("PATCH", f"/pods/{pod_id}", {"dockerStartCmd": _start_cmd()})
+    try:
+        _rest("POST", f"/pods/{pod_id}/restart")
+    except RelayError:  # restart endpoint is flaky; stop/start does the same
+        _rest("POST", f"/pods/{pod_id}/stop")
+        time.sleep(10)
+        _rest("POST", f"/pods/{pod_id}/start")
+    base = stable_url(pod_id)
+    deadline = time.time() + wait
+    while time.time() < deadline:
+        if ping(base):
+            return base
+        time.sleep(5)
+    raise RelayError(f"relay at {base} did not come back within {wait:.0f}s")
 
 
 def delete_pod(pod_id: str) -> None:
