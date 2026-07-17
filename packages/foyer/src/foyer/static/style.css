@@ -98,8 +98,14 @@ body {
 /* --- main / terminal ------------------------------------------------------ */
 #main { flex: 1; min-width: 0; display: flex; }
 #term-holder { position: relative; flex: 1; padding: 10px; }
-#terminal, #terminal .xterm, #terminal .xterm-viewport { height: 100%; }
-#terminal { height: 100%; }
+#terminal { position: relative; height: 100%; }
+/* One slot per kept-alive thread, all stacked in the same box. Inactive ones
+   are visibility-hidden (NOT display:none): they must stay laid out so their
+   xterm keeps real dimensions — a 0-size hidden client would make tmux
+   letterbox that session for every attached client, ssh included. */
+.term-slot { position: absolute; inset: 0; visibility: hidden; }
+.term-slot.active { visibility: visible; }
+.term-slot .xterm, .term-slot .xterm-viewport { height: 100%; }
 #placeholder {
   position: absolute; inset: 0; display: flex; align-items: center;
   justify-content: center; color: var(--fg-dim);

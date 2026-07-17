@@ -3,62 +3,135 @@
 
 const $ = (id) => document.getElementById(id);
 const state = {
-  sessions: [], active: null, ws: null, lastJson: "",
+  sessions: [], active: null, lastJson: "",
   notesTimer: null, notesSeq: 0, plotsVisible: false, dragging: null,
-  config: { workspace: "", command: "" }, renaming: null,
+  config: { workspace: "", command: "" }, renaming: null, warmed: false,
 };
 fetch("/api/config").then((r) => r.json()).then((c) => { state.config = c; })
   .catch(() => {});
 
-/* --- terminal ------------------------------------------------------------ */
-const term = new Terminal({
-  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
-  fontSize: 13,
-  scrollback: 8000,
-  cursorBlink: true,
-  theme: {
-    background: "#0e1116", foreground: "#d7dde6", cursor: "#57b0a3",
-    selectionBackground: "#2a4a45",
-  },
-});
-const fit = new FitAddon.FitAddon();
-term.loadAddon(fit);
-term.open($("terminal"));
+/* --- terminals: one kept-alive entry per thread --------------------------- */
+/* Switching threads shows/hides live terminals instead of reconnecting, so a
+   switch is instant after the first visit. The first ~MAX_TERMS threads are
+   pre-warmed on load; least-recently-used entries are evicted past the cap. */
+const MAX_TERMS = 8;
+const terms = new Map(); // name -> {name, term, fit, slot, ws, alive, lastUsed}
+let useClock = 0;
 
-function sendResize() {
-  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-    state.ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+function makeEntry(name) {
+  const slot = document.createElement("div");
+  slot.className = "term-slot";
+  $("terminal").appendChild(slot);
+  const term = new Terminal({
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+    fontSize: 13,
+    scrollback: 8000,
+    cursorBlink: true,
+    theme: {
+      background: "#0e1116", foreground: "#d7dde6", cursor: "#57b0a3",
+      selectionBackground: "#2a4a45",
+    },
+  });
+  const fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open(slot);
+  const entry = { name, term, fit, slot, ws: null, alive: false, lastUsed: 0 };
+  term.onData((d) => {
+    if (entry.ws && entry.ws.readyState === WebSocket.OPEN) {
+      entry.ws.send(JSON.stringify({ type: "input", data: d }));
+    }
+  });
+  connectEntry(entry);
+  terms.set(name, entry);
+  return entry;
+}
+
+function connectEntry(entry) {
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  const ws = new WebSocket(
+    `${proto}://${location.host}/ws?target=${encodeURIComponent(entry.name)}`);
+  ws.binaryType = "arraybuffer";
+  ws.onopen = () => { entry.alive = true; fitEntry(entry); };
+  ws.onmessage = (ev) => entry.term.write(new Uint8Array(ev.data));
+  ws.onclose = () => {
+    entry.alive = false;
+    if (state.active === entry.name) $("disconnected").classList.remove("hidden");
+  };
+  entry.ws = ws;
+}
+
+function fitEntry(entry) {
+  try { entry.fit.fit(); } catch (e) { return; }
+  if (entry.ws && entry.ws.readyState === WebSocket.OPEN) {
+    entry.ws.send(JSON.stringify(
+      { type: "resize", cols: entry.term.cols, rows: entry.term.rows }));
   }
 }
-new ResizeObserver(() => { try { fit.fit(); sendResize(); } catch (e) {} })
-  .observe($("term-holder"));
 
-term.onData((d) => {
-  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-    state.ws.send(JSON.stringify({ type: "input", data: d }));
+function disposeEntry(entry) {
+  terms.delete(entry.name);
+  if (entry.ws) { entry.ws.onclose = null; try { entry.ws.close(); } catch (e) {} }
+  entry.term.dispose();
+  entry.slot.remove();
+}
+
+function evictOverCap() {
+  while (terms.size > MAX_TERMS) {
+    let victim = null;
+    for (const e of terms.values()) {
+      if (e.name === state.active) continue;
+      if (!victim || e.lastUsed < victim.lastUsed) victim = e;
+    }
+    if (!victim) return;
+    disposeEntry(victim);
   }
-});
+}
 
 function attach(name) {
-  if (state.ws) { state.ws.onclose = null; state.ws.close(); state.ws = null; }
   state.active = name;
   document.title = `${name} — foyer`;
   $("placeholder").classList.add("hidden");
   $("disconnected").classList.add("hidden");
-  term.reset();
-  fit.fit();
-  const proto = location.protocol === "https:" ? "wss" : "ws";
-  const ws = new WebSocket(`${proto}://${location.host}/ws?target=${encodeURIComponent(name)}`);
-  ws.binaryType = "arraybuffer";
-  ws.onopen = () => { sendResize(); term.focus(); };
-  ws.onmessage = (ev) => term.write(new Uint8Array(ev.data));
-  ws.onclose = () => { if (state.active === name) $("disconnected").classList.remove("hidden"); };
-  state.ws = ws;
+  let entry = terms.get(name);
+  if (entry && !entry.alive && entry.ws &&
+      entry.ws.readyState !== WebSocket.CONNECTING) {
+    disposeEntry(entry); // died while hidden — rebuild silently
+    entry = null;
+  }
+  if (!entry) { entry = makeEntry(name); evictOverCap(); }
+  entry.lastUsed = ++useClock;
+  for (const e of terms.values()) {
+    e.slot.classList.toggle("active", e === entry);
+  }
+  fitEntry(entry);
+  entry.term.focus();
   renderSessions();
   loadNotes(name);
   loadPlots();
 }
-$("reconnect").onclick = () => state.active && attach(state.active);
+
+function prewarm() {
+  const names = state.sessions.slice(0, MAX_TERMS).map((s) => s.name);
+  let delay = 0;
+  for (const name of names) {
+    if (terms.has(name)) continue;
+    delay += 150; // stagger the attach burst a little
+    setTimeout(() => {
+      if (!terms.has(name) && terms.size < MAX_TERMS) makeEntry(name);
+    }, delay);
+  }
+}
+
+new ResizeObserver(() => { for (const e of terms.values()) fitEntry(e); })
+  .observe($("term-holder"));
+
+$("reconnect").onclick = () => {
+  const name = state.active;
+  if (!name) return;
+  const entry = terms.get(name);
+  if (entry) disposeEntry(entry);
+  attach(name);
+};
 
 /* --- sidebar ------------------------------------------------------------- */
 function ago(epoch) {
@@ -124,6 +197,12 @@ function startRename(nameEl, oldName) {
     if (state.active === oldName) {
       state.active = newName;
       document.title = `${newName} — foyer`;
+    }
+    const entry = terms.get(oldName);
+    if (entry) { // the attached client survives a tmux rename — just re-key
+      terms.delete(oldName);
+      entry.name = newName;
+      terms.set(newName, entry);
     }
     state.sessions.forEach((s) => { if (s.name === oldName) s.name = newName; });
     done();
@@ -226,6 +305,14 @@ async function refreshSessions() {
     state.lastJson = j;
     state.sessions = JSON.parse(j).sessions;
     renderSessions();
+    const live = new Set(state.sessions.map((s) => s.name));
+    for (const e of [...terms.values()]) {
+      if (!live.has(e.name)) disposeEntry(e); // session is gone
+    }
+    if (!state.warmed && state.sessions.length) {
+      state.warmed = true;
+      prewarm();
+    }
   } catch (e) { /* transient */ }
 }
 $("refresh").onclick = refreshSessions;
@@ -236,7 +323,7 @@ refreshSessions();
 function setPanel(open) {
   $("panel").classList.toggle("collapsed", !open);
   $("panel-open").classList.toggle("hidden", open);
-  try { fit.fit(); sendResize(); } catch (e) {}
+  for (const e of terms.values()) fitEntry(e);
 }
 $("panel-toggle").onclick = () => setPanel(false);
 $("panel-open").onclick = () => setPanel(true);
