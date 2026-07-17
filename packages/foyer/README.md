@@ -90,6 +90,9 @@ password. Rotate by deleting `~/.foyer/token` and restarting.
   `~/.foyer/config.json` → `{"workspace": "~/jarvis", "command": "claude"}`).
   The command goes in via send-keys so the shell — and the thread — survive
   the program exiting. Double-click a thread's name to rename it; notes,
-  plot roots, and sidebar order follow the new name.
+  plot roots, and sidebar order follow the new name. To kill a thread, hover
+  its card and click ✕ twice (first click arms a red "sure?" for 3s) — the
+  tmux session dies, its plot root and order slot are cleaned up, and its
+  notes file is deliberately kept.
 
 xterm.js (+fit addon) is vendored under `static/` — no CDN at runtime.

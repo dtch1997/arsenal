@@ -94,6 +94,17 @@ body {
   font-size: 9.5px; color: var(--amber); border: 1px solid var(--amber);
   border-radius: 4px; padding: 0 4px; opacity: .75; flex: none;
 }
+.card .kill {
+  background: none; border: none; color: var(--fg-dim); cursor: pointer;
+  font-size: 11px; padding: 0 3px; border-radius: 4px; flex: none;
+  opacity: 0; transition: opacity .12s;
+}
+.card:hover .kill { opacity: .8; }
+.card .kill:hover { color: #f87171; opacity: 1; }
+.card .kill.armed {
+  color: #fff; background: #b91c1c; opacity: 1; font-size: 10px;
+  font-weight: 700; padding: 1px 5px;
+}
 
 /* --- main / terminal ------------------------------------------------------ */
 #main { flex: 1; min-width: 0; display: flex; }

@@ -185,6 +185,28 @@ async def api_thread_rename(request: web.Request) -> web.Response:
     return web.json_response({"name": new})
 
 
+async def api_thread_delete(request: web.Request) -> web.Response:
+    name = request.match_info["session"]
+    taken = await asyncio.to_thread(sessions.names)
+    if name not in taken:
+        raise web.HTTPNotFound(text=f"no thread named {name!r}")
+    try:
+        await asyncio.to_thread(sessions.kill, name)
+    except RuntimeError as e:
+        raise web.HTTPBadRequest(text=str(e))
+    # Drop state that is meaningless without the session; keep the notes
+    # file — it may be the only record of what the thread was for.
+    roots = _read_state("plotroots.json")
+    if name in roots:
+        roots.pop(name)
+        _write_state("plotroots.json", roots)
+    order = _read_state("order.json")
+    if name in order.get("names", []):
+        order["names"] = [n for n in order["names"] if n != name]
+        _write_state("order.json", order)
+    return web.json_response({"ok": True})
+
+
 # --- terminal bridge --------------------------------------------------------- #
 
 async def ws_terminal(request: web.Request) -> web.WebSocketResponse:
@@ -371,6 +393,7 @@ def build_app(token: str | None = None) -> web.Application:
     app.router.add_get("/api/config", api_config)
     app.router.add_post("/api/threads", api_thread_create)
     app.router.add_post("/api/threads/{session}/rename", api_thread_rename)
+    app.router.add_delete("/api/threads/{session}", api_thread_delete)
     app.router.add_get("/api/plots", api_plots)
     app.router.add_put("/api/plotroot/{session}", api_plotroot_put)
     app.router.add_put("/api/order", api_order_put)
