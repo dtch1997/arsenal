@@ -5,7 +5,10 @@ const $ = (id) => document.getElementById(id);
 const state = {
   sessions: [], active: null, ws: null, lastJson: "",
   notesTimer: null, notesSeq: 0, plotsVisible: false, dragging: null,
+  config: { workspace: "", command: "" }, renaming: null,
 };
+fetch("/api/config").then((r) => r.json()).then((c) => { state.config = c; })
+  .catch(() => {});
 
 /* --- terminal ------------------------------------------------------------ */
 const term = new Terminal({
@@ -83,14 +86,88 @@ function renderSessions() {
       </div>
       <div class="meta"></div>
       <div class="snippet"></div>`;
-    card.querySelector(".name").textContent = s.name;
+    const nameEl = card.querySelector(".name");
+    nameEl.textContent = s.name;
+    nameEl.title = "double-click to rename";
     card.querySelector(".meta").textContent = `${s.dir}  ·  ${title}`;
     card.querySelector(".snippet").textContent = last;
     card.onclick = () => attach(s.name);
+    nameEl.ondblclick = (e) => { e.stopPropagation(); startRename(nameEl, s.name); };
     wireDrag(card, s.name);
     box.appendChild(card);
   }
 }
+
+/* inline rename: double-click a thread's name, Enter commits, Esc cancels */
+function startRename(nameEl, oldName) {
+  if (state.renaming) return;
+  state.renaming = oldName;
+  const input = document.createElement("input");
+  input.value = oldName;
+  nameEl.textContent = "";
+  nameEl.appendChild(input);
+  input.focus();
+  input.select();
+  input.onclick = (e) => e.stopPropagation();
+  const done = () => { state.renaming = null; state.lastJson = ""; renderSessions(); };
+  input.onkeydown = async (e) => {
+    if (e.key === "Escape") return done();
+    if (e.key !== "Enter") return;
+    const newName = input.value.trim();
+    if (!newName || newName === oldName) return done();
+    const r = await fetch(`/api/threads/${encodeURIComponent(oldName)}/rename`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: newName }),
+    });
+    if (!r.ok) { input.title = await r.text(); input.style.borderColor = "#f87171"; return; }
+    if (state.active === oldName) {
+      state.active = newName;
+      document.title = `${newName} — foyer`;
+    }
+    state.sessions.forEach((s) => { if (s.name === oldName) s.name = newName; });
+    done();
+    refreshSessions();
+  };
+  input.onblur = done;
+}
+
+/* new-thread popover */
+$("new-thread").onclick = () => {
+  const dirBase = (state.config.workspace || "").split("/").pop() || "thread";
+  const taken = new Set(state.sessions.map((s) => s.name));
+  let n = 1;
+  while (taken.has(`${dirBase}-${n}`)) n += 1;
+  $("new-name").value = "";
+  $("new-name").placeholder = `${dirBase}-${n}`;
+  $("new-dir").value = state.config.workspace || "";
+  $("new-error").textContent = "";
+  $("new-form").classList.remove("hidden");
+  $("new-thread").classList.add("hidden");
+  $("new-name").focus();
+};
+function closeNewForm() {
+  $("new-form").classList.add("hidden");
+  $("new-thread").classList.remove("hidden");
+}
+$("new-cancel").onclick = closeNewForm;
+$("new-form").onsubmit = async (e) => {
+  e.preventDefault();
+  $("new-error").textContent = "";
+  const r = await fetch("/api/threads", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: $("new-name").value.trim(),
+      dir: $("new-dir").value.trim(),
+    }),
+  });
+  if (!r.ok) { $("new-error").textContent = await r.text(); return; }
+  const j = await r.json();
+  closeNewForm();
+  await refreshSessions();
+  attach(j.name);
+};
 
 /* drag-and-drop reordering; the order is persisted server-side */
 function wireDrag(card, name) {
@@ -140,7 +217,7 @@ function clearDropMarks() {
 }
 
 async function refreshSessions() {
-  if (state.dragging) return; // don't re-render mid-drag
+  if (state.dragging || state.renaming) return; // don't re-render mid-edit
   try {
     const r = await fetch("/api/sessions");
     if (!r.ok) return;

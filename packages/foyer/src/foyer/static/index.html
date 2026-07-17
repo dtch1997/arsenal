@@ -12,6 +12,16 @@
 <div id="app">
   <aside id="sidebar">
     <div id="brand">🛎️ <span>foyer</span><button id="refresh" title="refresh sessions">⟳</button></div>
+    <button id="new-thread">＋ new thread</button>
+    <form id="new-form" class="hidden">
+      <input id="new-name" spellcheck="false" autocomplete="off" placeholder="name">
+      <input id="new-dir" spellcheck="false" autocomplete="off" placeholder="directory">
+      <div id="new-form-row">
+        <button type="submit">create</button>
+        <button type="button" id="new-cancel">cancel</button>
+      </div>
+      <div id="new-error"></div>
+    </form>
     <div id="sessions"></div>
   </aside>
   <main id="main">

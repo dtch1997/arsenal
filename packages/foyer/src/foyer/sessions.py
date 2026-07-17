@@ -52,10 +52,36 @@ def exists(name: str) -> bool:
         return False
 
 
-def preview(name: str, lines: int = 6) -> list[str]:
-    """Last few non-empty screen lines of the session's active pane."""
+def names() -> set[str]:
     try:
-        raw = _tmux("capture-pane", "-p", "-t", f"={name}", "-S", f"-{lines * 4}")
+        return set(_tmux("list-sessions", "-F", "#{session_name}").splitlines())
+    except RuntimeError:
+        return set()
+
+
+def create(name: str, cwd: str, command: str | None = None) -> None:
+    """New detached session at `cwd`; optionally type `command` into it.
+
+    The command goes in via send-keys (rather than as the session command) so
+    the shell — and the thread — survive the program exiting.
+    """
+    _tmux("new-session", "-d", "-s", name, "-c", cwd)
+    if command:
+        _tmux("send-keys", "-t", f"={name}:", command, "Enter")
+
+
+def rename(old: str, new: str) -> None:
+    _tmux("rename-session", "-t", f"={old}", new)
+
+
+def preview(name: str, lines: int = 6) -> list[str]:
+    """Last few non-empty screen lines of the session's active pane.
+
+    Pane-targeting commands need the trailing colon (`=name:` = the session's
+    current window): on tmux 3.2a a bare `=name` fails with "can't find pane".
+    """
+    try:
+        raw = _tmux("capture-pane", "-p", "-t", f"={name}:", "-S", f"-{lines * 4}")
     except RuntimeError:
         return []
     tail = [ln.rstrip() for ln in raw.splitlines() if ln.strip()]

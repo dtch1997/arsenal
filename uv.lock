@@ -236,7 +236,7 @@ wheels = [
 
 [[package]]
 name = "bellhop-py"
-version = "0.6.0"
+version = "0.6.1"
 source = { editable = "packages/bellhop" }
 dependencies = [
     { name = "cloudpickle" },
