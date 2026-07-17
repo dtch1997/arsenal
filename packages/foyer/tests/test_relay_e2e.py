@@ -97,6 +97,38 @@ def stack(tmp_path):
         subprocess.run([*tmux, "kill-server"], capture_output=True)
 
 
+def test_connect_falls_back_to_parent_domain(monkeypatch):
+    """NXDOMAIN on a fresh tunnel subdomain -> connect via parent + SNI."""
+    from foyer import relay_httpd
+
+    calls = []
+
+    class FakeSock:
+        def settimeout(self, t): pass
+
+    def fake_create_connection(addr, timeout=None):
+        calls.append(addr)
+        if addr[0] == "fresh-tunnel.trycloudflare.com":
+            raise socket.gaierror(-2, "Name or service not known")
+        return FakeSock()
+
+    sni = {}
+
+    class FakeCtx:
+        def wrap_socket(self, raw, server_hostname=None):
+            sni["host"] = server_hostname
+            return raw
+
+    monkeypatch.setattr(relay_httpd.socket, "create_connection",
+                        fake_create_connection)
+    monkeypatch.setattr(relay_httpd.ssl, "create_default_context",
+                        lambda: FakeCtx())
+    relay_httpd._connect("https://fresh-tunnel.trycloudflare.com")
+    assert calls == [("fresh-tunnel.trycloudflare.com", 443),
+                     ("trycloudflare.com", 443)]
+    assert sni["host"] == "fresh-tunnel.trycloudflare.com"
+
+
 def test_relay_forwarding_and_websocket(stack):
     aiohttp = pytest.importorskip("aiohttp")
     relay, target, token = stack["relay"], stack["target"], stack["token"]

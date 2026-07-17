@@ -130,10 +130,24 @@ def _control(client: socket.socket, method: str, path: str,
 def _connect(target: str) -> socket.socket:
     u = urlsplit(target)
     port = u.port or (443 if u.scheme == "https" else 80)
-    raw = socket.create_connection((u.hostname, port), timeout=30)
+    host = u.hostname
+    try:
+        raw = socket.create_connection((host, port), timeout=30)
+    except socket.gaierror:
+        # Freshly-minted tunnel subdomains (one DNS record per quick tunnel,
+        # no wildcard) may not have propagated to this resolver yet — and a
+        # too-early lookup gets its NXDOMAIN negatively cached. The parent
+        # domain resolves to the same edge IPs, and TLS SNI (below) routes to
+        # the right tunnel, so connect via the parent instead.
+        if "." not in host:
+            raise
+        parent = host.split(".", 1)[1]
+        print(f"foyer-relay: {host} not resolving; connecting via {parent}",
+              flush=True)
+        raw = socket.create_connection((parent, port), timeout=30)
     if u.scheme == "https":
         ctx = ssl.create_default_context()
-        return ctx.wrap_socket(raw, server_hostname=u.hostname)
+        return ctx.wrap_socket(raw, server_hostname=host)
     return raw
 
 
