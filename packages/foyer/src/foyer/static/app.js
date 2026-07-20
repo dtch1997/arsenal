@@ -18,6 +18,10 @@ const MAX_TERMS = 8;
 const terms = new Map(); // name -> {name, term, fit, slot, ws, alive, lastUsed}
 let useClock = 0;
 
+function openLink(event, uri) {
+  if (event.metaKey || event.ctrlKey) window.open(uri, "_blank", "noopener");
+}
+
 function makeEntry(name) {
   const slot = document.createElement("div");
   slot.className = "term-slot";
@@ -31,9 +35,14 @@ function makeEntry(name) {
       background: "#0e1116", foreground: "#d7dde6", cursor: "#57b0a3",
       selectionBackground: "#2a4a45",
     },
+    // OSC 8 hyperlinks (emitted by link-aware programs): cmd/ctrl+click,
+    // matching terminal convention so plain clicks still just move focus.
+    linkHandler: { activate: openLink },
   });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
+  // Plain-text URLs in output become links with the same modifier-click.
+  term.loadAddon(new WebLinksAddon.WebLinksAddon(openLink));
   term.open(slot);
   const entry = { name, term, fit, slot, ws: null, alive: false, lastUsed: 0 };
   term.onData((d) => {

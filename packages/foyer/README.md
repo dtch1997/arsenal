@@ -101,4 +101,8 @@ password. Rotate by deleting `~/.foyer/token` and restarting.
   tmux session dies, its plot root and order slot are cleaned up, and its
   notes file is deliberately kept.
 
-xterm.js (+fit addon) is vendored under `static/` — no CDN at runtime.
+URLs in terminal output (plain text or OSC 8 hyperlinks) are **cmd/ctrl+click**
+to open, matching terminal convention.
+
+xterm.js (+fit and web-links addons) is vendored under `static/` — no CDN at
+runtime.
