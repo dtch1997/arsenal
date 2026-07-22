@@ -94,6 +94,11 @@ class PodConfig:
     # here it's a post-ready `python3 -m pip install`). Pre-flight conflicts
     # locally (`uv pip compile`) before burning pod-hours on a bad pin set.
     pip: list[str] = field(default_factory=list)
+    # Host CUDA-driver filter. RunPod schedules onto any host meeting the
+    # IMAGE's CUDA floor, which can be far older than what your wheels need
+    # (a cu13-linked vllm wheel dies on a 12.9-driver host with "driver too
+    # old"). List the acceptable host CUDA versions, e.g. ["13.0", "13.1"].
+    cuda_versions: list[str] | None = None
     # Container start command override (single shell command string). Lets
     # non-RunPod images (which don't consume PUBLIC_KEY or start sshd) work as
     # ssh job pods — e.g. bootstrap sshd and block:
@@ -189,6 +194,8 @@ class PodConfig:
         }
         if self.docker_start_cmd:
             body["dockerStartCmd"] = ["bash", "-c", self.docker_start_cmd]
+        if self.cuda_versions:
+            body["allowedCudaVersions"] = list(self.cuda_versions)
         if self.resolved_compute == "gpu":
             body["gpuTypeIds"] = self.resolve_gpu_ids()
             body["gpuCount"] = self.gpu_count
@@ -226,6 +233,8 @@ class PodConfig:
         if self.docker_start_cmd:
             # GraphQL's dockerArgs is the single-string spelling of REST's dockerStartCmd
             inp["dockerArgs"] = f"bash -c {shlex.quote(self.docker_start_cmd)}"
+        if self.cuda_versions:
+            inp["allowedCudaVersions"] = list(self.cuda_versions)
         if self.volume_gb:
             inp["volumeInGb"] = self.volume_gb
             inp["volumeMountPath"] = self.volume_mount_path
