@@ -1,0 +1,120 @@
+/* notes.css — shared note typography for cowrite previews and the JARVIS
+ * lab-notes site (distill.pub-flavored).
+ *
+ * Canonical copy: arsenal packages/cowrite/src/cowrite/notes.css
+ * Vendored copy:  lab-notes-jarvis site/assets/notes.css  — keep in sync.
+ *
+ * Scope: everything is under `.note`, the article-content wrapper both hosts
+ * add. Colors come from CSS variables with light defaults; hosts (or the two
+ * dark-mode blocks below) override them. The host owns page chrome
+ * (header/panes/background); this sheet owns the words.
+ */
+
+.note {
+  --n-ink: #1b1b1e;          /* prose */
+  --n-head: #0f0f10;         /* headings: darker than prose */
+  --n-muted: #6e6e73;        /* meta, captions, blockquote */
+  --n-line: #e6e6e3;         /* hairlines */
+  --n-accent: #0a6ecb;       /* links */
+  --n-code-bg: #f4f4f2;
+  --n-pre-bg: #f7f7f5;
+  --n-pre-ink: #24292f;
+  --n-th: #55555a;           /* table header text */
+
+  max-width: 720px;
+  margin: 0 auto;
+  color: var(--n-ink);
+  font: 17px/1.7 Georgia, 'Iowan Old Style', 'Times New Roman', serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* --- headings: sans, a real scale, darker than prose --------------------- */
+.note h1, .note h2, .note h3, .note h4 {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  color: var(--n-head);
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+.note h1 { font-size: 30px; font-weight: 700; margin: 0.6em 0 0.35em; }
+.note h2 { font-size: 22px; font-weight: 650; margin: 2.1em 0 0.55em;
+           padding-bottom: 0.25em; border-bottom: 1px solid var(--n-line); }
+.note h3 { font-size: 18px; font-weight: 650; margin: 1.7em 0 0.4em; }
+.note h4 { font-size: 15px; font-weight: 650; margin: 1.5em 0 0.3em;
+           text-transform: uppercase; letter-spacing: 0.05em; color: var(--n-muted); }
+
+.note p { margin: 0.9em 0; }
+.note a { color: var(--n-accent); text-decoration: none;
+          border-bottom: 1px solid color-mix(in srgb, var(--n-accent) 35%, transparent); }
+.note a:hover { border-bottom-color: var(--n-accent); }
+.note strong { color: var(--n-head); }
+
+/* --- meta line under the title (host adds class="meta") ------------------ */
+.note .meta {
+  font: 13px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  color: var(--n-muted); margin: 0 0 2em;
+}
+.note .meta a { color: var(--n-muted); }
+
+/* --- code ---------------------------------------------------------------- */
+.note code {
+  background: var(--n-code-bg); padding: 0.1em 0.35em; border-radius: 4px;
+  font: 0.82em/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.note pre {
+  background: var(--n-pre-bg); color: var(--n-pre-ink);
+  border: 1px solid var(--n-line); border-radius: 6px;
+  padding: 14px 16px; overflow-x: auto; font-size: 13px; line-height: 1.55;
+}
+.note pre code { background: none; padding: 0; font-size: inherit; }
+
+/* --- tables: distill-style horizontal rules only ------------------------- */
+.note table {
+  border-collapse: collapse; width: 100%; margin: 1.3em 0;
+  font: 14px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+}
+.note th, .note td {
+  border: 0; border-bottom: 1px solid var(--n-line);
+  padding: 7px 10px; text-align: left; vertical-align: top;
+}
+.note th {
+  color: var(--n-th); font-weight: 600; font-size: 12.5px;
+  text-transform: uppercase; letter-spacing: 0.04em;
+  border-bottom: 2px solid var(--n-line);
+}
+
+/* --- figures: quiet, captioned by the em/small line beneath -------------- */
+.note img {
+  max-width: 100%; height: auto; display: block; margin: 1.6em auto 0.5em;
+  border-radius: 4px;
+}
+.note img + em, .note .caption {
+  display: block; text-align: center; margin: 0 auto 1.6em;
+  font: 13px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  color: var(--n-muted); max-width: 620px;
+}
+
+/* --- the rest ------------------------------------------------------------ */
+.note blockquote {
+  margin: 1.2em 0; padding: 0.1em 1.2em;
+  border-left: 3px solid var(--n-line); color: var(--n-muted);
+}
+.note hr { border: 0; border-top: 1px solid var(--n-line); margin: 2.2em 0; }
+.note ul, .note ol { padding-left: 26px; margin: 0.9em 0; }
+.note li { margin: 0.35em 0; }
+.note li > p { margin: 0.35em 0; }
+
+/* --- dark mode: media query (cowrite) + data-theme toggle (lab-notes) ---- */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .note {
+    --n-ink: #d6d6d3; --n-head: #f2f2ef; --n-muted: #94948f; --n-line: #34343a;
+    --n-accent: #62a5e8; --n-code-bg: #26262b; --n-pre-bg: #212126;
+    --n-pre-ink: #d6d6d3; --n-th: #a2a29d;
+  }
+  :root:not([data-theme="light"]) .note img { background: #f4f0e8; }
+}
+:root[data-theme="dark"] .note {
+  --n-ink: #d6d6d3; --n-head: #f2f2ef; --n-muted: #94948f; --n-line: #34343a;
+  --n-accent: #62a5e8; --n-code-bg: #26262b; --n-pre-bg: #212126;
+  --n-pre-ink: #d6d6d3; --n-th: #a2a29d;
+}
+:root[data-theme="dark"] .note img { background: #f4f0e8; }

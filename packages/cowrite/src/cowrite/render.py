@@ -8,6 +8,7 @@ matches exactly what lands on disk.
 from __future__ import annotations
 
 import html as _html
+from pathlib import Path
 
 
 def render_fragment(md_text: str) -> str:
@@ -30,22 +31,13 @@ def _pygments_css() -> str:
         return ""
 
 
-# Preview styling (so the preview matches a typical published look) + editor
-# chrome (top bar, split panes, textarea).
+# Note typography lives in notes.css — the sheet shared with the JARVIS
+# lab-notes site, so the preview matches what the site publishes. The block
+# below is only preview-pane layout + bits notes.css doesn't own.
+_NOTES_CSS = (Path(__file__).parent / "notes.css").read_text()
+
 _PREVIEW_CSS = """
-.preview { max-width: 820px; margin: 0 auto; padding: 1.6rem 1.4rem 4rem;
-  font: 16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif; }
-.preview h1,.preview h2,.preview h3,.preview h4 { line-height: 1.25; margin-top: 1.8rem; }
-.preview h1,.preview h2 { border-bottom: 1px solid #d0d7de; padding-bottom: .3rem; }
-.preview a { color: #0969da; }
-.preview code { background: #f6f8fa; padding: .15em .35em; border-radius: 5px; font-size: 85%; }
-.preview pre { background: #f6f8fa; padding: 1rem; border-radius: 8px; overflow: auto; }
-.preview pre code { background: none; padding: 0; font-size: 90%; }
-.preview table { border-collapse: collapse; margin: 1rem 0; }
-.preview table th,.preview table td { border: 1px solid #d0d7de; padding: .4rem .8rem; }
-.preview blockquote { margin: 0; padding: 0 1rem; color: #656d76; border-left: .25rem solid #d0d7de; }
-.preview img { max-width: 100%; }
-.preview hr { border: 0; height: 1px; background: #d0d7de; }
+.preview { padding: 1.6rem 1.4rem 4rem; }
 .preview .codehilite { border-radius: 8px; }
 """
 
@@ -98,9 +90,6 @@ textarea { flex: 1 1 auto; width: 100%; border: 0; outline: none; resize: none;
   textarea { color: #e6edf3; background: #0d1117; }
   .pane.edit { border-color: #30363d; } .pane.view { background: #0d1117; }
   .gutter { background: #30363d; } .gutter:hover, .gutter.dragging { background: #4493f8; }
-  .preview a { color: #4493f8; } .preview code,.preview pre { background: #161b22 !important; }
-  .preview table th,.preview table td { border-color: #30363d; }
-  .preview h1,.preview h2 { border-color: #30363d; } .preview hr { background: #30363d; }
 }
 """
 
@@ -129,7 +118,7 @@ _PAGE = """<!DOCTYPE html>
 <div class="split">
   <div class="pane edit"><textarea id="src" spellcheck="false">__MD__</textarea></div>
   <div class="gutter" id="gutter" title="Drag to resize · double-click to reset"></div>
-  <div class="pane view"><div class="preview" id="preview">__PREVIEW__</div></div>
+  <div class="pane view"><div class="preview note" id="preview">__PREVIEW__</div></div>
 </div>
 <script>
 const src = document.getElementById('src');
@@ -297,7 +286,7 @@ gutter.addEventListener('dblclick', () => { editPane.style.removeProperty('--edi
 
 def build_page(md_text: str, title: str, disk_path: str, rev: str) -> str:
     """Build the full editor HTML page for a draft."""
-    css = _CHROME_CSS + "\n" + _PREVIEW_CSS + "\n" + _pygments_css()
+    css = _CHROME_CSS + "\n" + _NOTES_CSS + "\n" + _PREVIEW_CSS + "\n" + _pygments_css()
     return (
         _PAGE.replace("__CSS__", css)
         .replace("__TITLE__", _html.escape(title))
