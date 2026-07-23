@@ -105,5 +105,38 @@ def test_live_call():
     asyncio.run(_run_call())
 
 
+async def _run_slow_boot():
+    """The issue-#27 path end-to-end: non-RunPod image + docker_start_cmd sshd
+    bootstrap + default TTL (GraphQL create), carried to readiness by the
+    docker_start_cmd-widened default windows — no explicit timeouts here on
+    purpose; that IS the assertion."""
+    from bellhop.pod import pod
+
+    sshd = (
+        'apt-get update && apt-get install -y openssh-server && mkdir -p /run/sshd ~/.ssh'
+        ' && echo "$PUBLIC_KEY" > ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys'
+        " && /usr/sbin/sshd -D"
+    )
+    cfg = PodConfig(
+        gpu="RTX4090",
+        image="ubuntu:22.04",
+        docker_start_cmd=sshd,
+        container_disk_gb=15,
+        name="bellhop-live-slowboot",
+    )
+    assert cfg.provision_timeout == timedelta(seconds=1200)  # widened default resolved
+    assert cfg.has_ttl()  # default timers on -> _gql_create path
+    t0 = time.time()
+    async with pod(cfg) as p:
+        r = await p.exec("echo alive && uname -a")
+        print(f"pod {p.id} ready in {time.time() - t0:.0f}s: {r.stdout.strip()}")
+        assert r.exit_code == 0
+        assert "alive" in r.stdout
+
+
+def test_live_slow_boot():
+    asyncio.run(_run_slow_boot())
+
+
 if __name__ == "__main__":
     asyncio.run(_run())
