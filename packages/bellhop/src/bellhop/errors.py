@@ -37,6 +37,30 @@ class ProvisionError(BellhopError):
     exit_code = 20
 
 
+# RunPod's ways of saying "no stock", collected from live runs (issue #27's
+# probe matrix and stock-outs since). Heuristic by necessity — the API gives
+# prose, not codes — so keep entries lowercase substrings.
+CAPACITY_SIGNATURES = (
+    "no capacity",                       # graphql null-pod spelling
+    "does not have the resources",       # graphql machine-match failure
+    "no longer any instances available", # rest out-of-stock
+    "out of stock",
+    "no instances",
+)
+
+
+def is_capacity_error(err: BaseException) -> bool:
+    """Best-effort: does this provision failure look like a stock-out?
+
+    Lets callers (retry loops, live test suites) separate "RunPod has no
+    machines right now" from "my request is broken". False negatives are
+    possible when RunPod invents new prose; treat a True as reliable and a
+    False as "unknown".
+    """
+    msg = str(err).lower()
+    return any(sig in msg for sig in CAPACITY_SIGNATURES)
+
+
 class PodNotReadyError(BellhopError):
     """Box never became functional within the timeout."""
 

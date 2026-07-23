@@ -1,0 +1,47 @@
+# Weekly live regression suite against the real RunPod API (billed, ~$0.10/run).
+# The thing under regression test is mostly RunPod's side of the contract
+# (error prose, readiness timing, GraphQL quirks) — offline tests can't see
+# that drift, so this runs on a schedule rather than per-PR. Failures file a
+# deduped issue; stock-outs skip inside the suite (bellhop.is_capacity_error).
+name: bellhop-live
+on:
+  schedule:
+    - cron: "17 6 * * 1"   # Mondays 06:17 UTC
+  workflow_dispatch:
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      # py3.11 to match the pytorch-cuda image: call()'s cloudpickle parity
+      # pre-flight requires the client minor version to equal the pod's
+      - run: uv python install 3.11
+      - run: uv sync --all-packages -p 3.11
+      - name: ephemeral ssh keypair (PodConfig default path)
+        run: mkdir -p ~/.ssh && ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519
+      - name: run live suite
+        env:
+          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+          RUNPOD_LIVE: "1"
+          # BELLHOP_LIVE_GCS deliberately unset: no cloud creds on the runner
+        run: uv run pytest packages/bellhop/tests/integration_live.py -s -x
+      - name: file issue on failure (deduped)
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TITLE="bellhop live suite failing"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          EXISTING=$(gh issue list --state open --search "\"$TITLE\" in:title" --json number -q '.[0].number')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "Still failing: $RUN_URL"
+          else
+            gh issue create --title "$TITLE" \
+              --body "The weekly live regression suite failed — likely RunPod contract drift or a real regression. Run: $RUN_URL"
+          fi
