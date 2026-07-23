@@ -32,8 +32,13 @@ with the answer. If your deliverable depends on an external long-running job
 (pod pipeline, training run), do not wait in-session for more than a few
 minutes and never ship placeholder results: call the `signal_waiting` tool
 with a cheap shell probe that exits 0 when the job is done, then stop; you
-will be resumed to finish when it fires. Otherwise, complete the task so the
-gate passes, then stop.
+will be resumed to finish when it fires. If the task splits into independent,
+parallelizable subtasks (each with an externally checkable definition of
+done), you may call up new workers within the pool via the `delegate` tool —
+one call per child, then park on the probe it returns via `signal_waiting`;
+never wait in-session for children. A sequential pipeline is one task
+orchestrated with stagehand, not a chain of children. Otherwise, complete the
+task so the gate passes, then stop.
 
 --- TASK SPEC ---
 """

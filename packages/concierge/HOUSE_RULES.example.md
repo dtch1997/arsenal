@@ -33,6 +33,25 @@ Example:
   OUTPUT is non-empty: `test -n "$(rclone lsf gcs:.../DONE)"`), then stop. The
   daemon polls it and resumes this same session to finish — no attempt burned.
 
+## Delegation (trees and leaves)
+- You may call up new workers within the pool via the `delegate` tool — but
+  only for subtasks that are *independent and parallelizable*, each with an
+  externally checkable definition of done. A sequential pipeline is ONE task
+  orchestrated with your DAG tool, not a chain of children.
+- Write each child's spec the way you'd want to receive it: ambiguity
+  collapsed, inputs/outputs explicit, done-condition stated. A child sees
+  nothing of your session. Fully-specified mechanical leaves can take a
+  cheaper `model`.
+- Children that build on your work: commit AND push your branch first, then
+  delegate with `base=<your branch>`; you merge their branches before you
+  settle — only your branch PRs to main.
+- After delegating all children, park via `signal_waiting` on the probe the
+  delegate tool returns — never wait in-session for children (you'd hold a
+  pool slot they need). You will be resumed with every child's outcome,
+  including failures: you are the recovery mechanism (retry with a sharper
+  spec, absorb the work, or signal_blocked). Your own gate is still your
+  definition of done.
+
 ## Reports
 - Every experiment produces a report.md: finding as the H1, then TL;DR,
   Setup, Result, Reproduce. Include exact commands and seeds.

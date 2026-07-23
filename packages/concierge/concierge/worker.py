@@ -30,11 +30,13 @@ from claude_agent_sdk import (
     tool,
 )
 
+from . import delegation
 from .records import Home, load_config, now_iso
 
 READONLY_TOOLS = ["Read", "Glob", "Grep", "WebSearch", "WebFetch"]
 BLOCKED_TOOL = "mcp__concierge__signal_blocked"
 WAITING_TOOL = "mcp__concierge__signal_waiting"
+DELEGATE_TOOL = "mcp__concierge__delegate"
 WAIT_TIMEOUT_MINUTES = 720
 
 
@@ -66,7 +68,8 @@ def _options(home: Home, task: dict, cfg: dict, resume: str | None,
     mailbox_server = create_sdk_mcp_server(
         name="concierge",
         tools=[_blocked_tool(home, task["id"]),
-               _waiting_tool(home, task["id"], cfg, attempt)])
+               _waiting_tool(home, task["id"], cfg, attempt),
+               _delegate_tool(home, task["id"], cfg)])
     readonly = task["workspace"].get("access") == "readonly"
     spent = sum(a.get("cost_usd") or 0 for a in task["attempts"])
     remaining = max(0.5, task["budget"]["usd"] - spent)
@@ -83,7 +86,13 @@ def _options(home: Home, task: dict, cfg: dict, resume: str | None,
         cwd=str(home.workspace(task["id"])),
         resume=resume,
         mcp_servers={"concierge": mailbox_server},
-        allowed_tools=(READONLY_TOOLS if readonly else []) + [BLOCKED_TOOL, WAITING_TOOL],
+        # delegate is withheld from readonly workers: a readonly parent minting
+        # readwrite children would be a privilege escalation
+        allowed_tools=(READONLY_TOOLS if readonly else [DELEGATE_TOOL])
+                      + [BLOCKED_TOOL, WAITING_TOOL],
+        # per-task model override — the trees-and-leaves economics knob: parents
+        # run the default (frontier) model, leaves can be delegated down-tier
+        model=task.get("model"),
         # readonly: nothing outside the allowlist gets auto-approved, and there
         # is no human to approve — write tools are effectively denied
         permission_mode=None if readonly else cfg.get("permission_mode", "bypassPermissions"),
@@ -150,6 +159,72 @@ def _waiting_tool(home: Home, tid: str, cfg: dict, attempt: int):
                              "text": "Wait registered. Stop now; you will be "
                                      "resumed when the condition fires."}]}
     return signal_waiting
+
+
+def _delegate_tool(home: Home, tid: str, cfg: dict):
+    @tool("delegate",
+          "Call up a new worker WITHIN your pool for one independent subtask "
+          "(trees and leaves). The child is an ordinary pool task: it queues "
+          "behind the pool's concurrency cap and dispatches when a slot frees. "
+          "Delegate only subtasks that are independent and parallelizable, each "
+          "with an externally checkable definition of done — a sequential "
+          "pipeline is ONE task orchestrated with stagehand, not a chain of "
+          "children. Write the child's spec the way you'd want to receive it: "
+          "all ambiguity collapsed, inputs/outputs explicit. Children building "
+          "on your work: commit AND push your branch first, then pass "
+          "base=<your branch>. After delegating ALL children, call "
+          "signal_waiting with the probe this tool returns, then stop; you will "
+          "be resumed with every child's outcome (including failures — you are "
+          "the recovery mechanism: retry with a sharper spec, absorb the work, "
+          "or signal_blocked). Never wait in-session for children.",
+          {"type": "object",
+           "properties": {
+               "title": {"type": "string", "description": "short child task title"},
+               "spec": {"type": "string",
+                        "description": "full Markdown spec for the child — self-contained; "
+                                       "the child sees nothing of your session"},
+               "gate": {"type": "object",
+                        "description": "serialized completion gate, checked externally after "
+                                       "the child exits (default: none). Examples: "
+                                       '{"kind": "pr_open"}, '
+                                       '{"kind": "shell_ok", "cmd": "test -s results.jsonl"}, '
+                                       '{"kind": "all_of", "gates": [...]}'},
+               "budget_usd": {"type": "number",
+                              "description": "child USD budget, carved from your remaining "
+                                             "budget (default 10 or what remains)"},
+               "budget_minutes": {"type": "number",
+                                  "description": "child wall-clock budget (default 120)"},
+               "model": {"type": "string",
+                         "description": "model for the child worker (default: inherit yours). "
+                                        "Use a cheaper model for mechanical, fully-specified leaves"},
+               "base": {"type": "string",
+                        "description": "git base for the child's branch (default: your task's "
+                                       "base). Pass your own PUSHED branch for children that "
+                                       "build on your work"},
+           },
+           "required": ["title", "spec"]})
+    async def delegate(args):
+        # read-only load — the daemon owns this record; we only ever create new
+        # child records, never write our own
+        parent = home.load(tid)
+        try:
+            child = delegation.delegate_child(
+                home, parent, cfg,
+                title=str(args["title"]), spec=str(args["spec"]),
+                gate=args.get("gate"), budget_usd=args.get("budget_usd"),
+                budget_minutes=args.get("budget_minutes"),
+                model=args.get("model"), base=args.get("base"))
+        except delegation.DelegationError as e:
+            return {"content": [{"type": "text", "text": f"Delegation refused: {e}"}]}
+        probe = f"{sys.executable} -m concierge --home {home.root} probe-children {tid}"
+        return {"content": [{"type": "text", "text":
+                f"Delegated {child['id']} ({child['title']}) at depth {child['depth']}, "
+                f"budget ${child['budget']['usd']:.2f}, model "
+                f"{child['model'] or 'default'}. It dispatches when a pool slot frees. "
+                f"When you have delegated all children, call signal_waiting with "
+                f"until_shell = `{probe}` and stop; you will be resumed with each "
+                f"child's outcome."}]}
+    return delegate
 
 
 async def run(home: Home, task: dict, prompt: str, out, resume: str | None,
