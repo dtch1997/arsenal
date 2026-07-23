@@ -7,7 +7,9 @@ retries with feedback when the gate fails, parks it `blocked` when the worker
 asks a question, and notifies you on every terminal transition.
 
 An asyncio-native **library** (in the spirit of bellhop), not a CLI. See
-[SPEC.md](SPEC.md) for the design: primitives, state machine, verbs.
+[SPEC.md](SPEC.md) for the design (primitives, state machine, verbs) and
+[PATTERNS.md](PATTERNS.md) for intended usage patterns — when to reach for
+concierge, gate design, delegation, model economics.
 
 ## Quickstart
 
@@ -111,8 +113,9 @@ freely):
 python -m concierge serve          # or: await pool.serve() inside your own loop
 ```
 
-`python -m concierge` has exactly two subcommands (`serve`, `msg`) — the two
-things that must be shell-reachable. Everything else is the Python API:
+`python -m concierge` has exactly three subcommands (`serve`, `msg`,
+`probe-children`) — the things that must be shell-reachable. Everything else
+is the Python API:
 `submit / wait / wait_all / msg / tasks / get / transcript / cancel / remove`.
 
 ## Status
