@@ -1,8 +1,17 @@
-"""Live end-to-end test: provisions a REAL RTX 4090 community pod (costs $).
+"""Live end-to-end tests: provision REAL RunPod pods (costs $).
 
 Skipped by default. Run explicitly with:
     RUNPOD_LIVE=1 pytest tests/integration_live.py -s
-(needs RUNPOD_API_KEY, an ~/.ssh/id_ed25519 keypair, and gcloud on PATH).
+(needs RUNPOD_API_KEY and an ~/.ssh/id_ed25519 keypair).
+
+Knobs:
+    BELLHOP_LIVE_GCS=gs://bucket/prefix   also exercise the GCS upload leg
+                                          (needs gcloud; off by default so CI
+                                          runners don't need cloud creds)
+    BELLHOP_LIVE_GPU=<alias>              override the call() test's GPU
+
+Stock-outs are skips, not failures: RunPod running dry on a GPU type is not
+a bellhop regression, and a suite that fails on capacity noise gets ignored.
 """
 import asyncio
 import os
@@ -11,22 +20,34 @@ from datetime import timedelta
 
 import pytest
 
-from bellhop import PodConfig, RunSpec, SshProbe, run
+from bellhop import PodConfig, ProvisionError, RunSpec, SshProbe, is_capacity_error, run
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("RUNPOD_LIVE"),
     reason="set RUNPOD_LIVE=1 to run the billed live pod test",
 )
 
+_TESTCODE = os.path.join(os.path.dirname(__file__), os.pardir, "_testcode")
+
+
+def _live(coro):
+    """asyncio.run, but a capacity-shaped provision failure is a skip."""
+    try:
+        asyncio.run(coro)
+    except ProvisionError as e:
+        if is_capacity_error(e):
+            pytest.skip(f"RunPod capacity, not a regression: {e}")
+        raise
+
 
 async def _run():
     t0 = time.time()
     spec = RunSpec(
         slug="rpr-selftest",
-        codebase="./_testcode",
+        codebase=_TESTCODE,
         run="python go.py",
         env={"MY_SECRET": "s3cr3t-xyz"},  # validates env-injection (should appear in out.txt)
-        gcs_base="gs://alignment-team-general-storage/daniel/jarvis/experiments",
+        gcs_base=os.environ.get("BELLHOP_LIVE_GCS"),  # upload leg is opt-in
     )
     cfg = PodConfig(
         gpu="RTX4090",   # exercises the canonical-alias path end-to-end
@@ -49,7 +70,7 @@ async def _run():
 
 
 def test_live_end_to_end():
-    asyncio.run(_run())
+    _live(_run())
 
 
 async def _run_call():
@@ -102,7 +123,7 @@ async def _run_call():
 
 
 def test_live_call():
-    asyncio.run(_run_call())
+    _live(_run_call())
 
 
 async def _run_slow_boot():
@@ -135,7 +156,7 @@ async def _run_slow_boot():
 
 
 def test_live_slow_boot():
-    asyncio.run(_run_slow_boot())
+    _live(_run_slow_boot())
 
 
 if __name__ == "__main__":

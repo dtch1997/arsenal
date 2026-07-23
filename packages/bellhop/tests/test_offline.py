@@ -489,6 +489,25 @@ def test_gql_create_reports_every_attempt(tmp_path, monkeypatch):
         assert f"{gid} on COMMUNITY" in msg and f"{gid} on SECURE" in msg
 
 
+def test_is_capacity_error_classification():
+    from bellhop import is_capacity_error
+
+    # real prose from live runs (issue #27 probe matrix)
+    assert is_capacity_error(ProvisionError(
+        "graphql create failed on every cloud/GPU attempt:\n"
+        "  NVIDIA GeForce RTX 4090 on COMMUNITY: graphql error: This machine "
+        "does not have the resources to deploy your pod. Please try a different machine"
+    ))
+    assert is_capacity_error(ProvisionError(
+        "podFindAndDeployOnDemand returned null (no capacity for the request)"
+    ))
+    # a broken request must NOT be classified as capacity
+    assert not is_capacity_error(ProvisionError(
+        'graphql error: Variable "$input" got invalid value'
+    ))
+    assert not is_capacity_error(ProvisionError("graphql HTTP 401: unauthorized"))
+
+
 def test_cpu_pod_with_ttl_warns(tmp_path, monkeypatch):
     # CPU pods can't get a native TTL (GraphQL on-demand is GPU-only); the
     # silent drop was a leaked-pod risk, so it must warn.

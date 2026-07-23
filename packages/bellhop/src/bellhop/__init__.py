@@ -13,6 +13,7 @@ from .errors import (
     RemoteJobError,
     ResultsMissingError,
     RunpodError,
+    is_capacity_error,
 )
 from .graphql import RunpodGraphQL
 from .modal_box import ModalConfig, Sandbox, sandbox
@@ -34,5 +35,5 @@ __all__ = [
     # errors
     "BellhopError", "RunpodError", "PreflightError", "ProvisionError", "PodNotReadyError",
     "RemoteJobError", "ExecTimeoutError", "RemoteCallError", "ResultsMissingError",
-    "GcsUploadError",
+    "GcsUploadError", "is_capacity_error",
 ]
