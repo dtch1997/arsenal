@@ -112,10 +112,13 @@ class PodConfig:
     # auth / connection
     ssh_key: str | None = None             # private key; default ~/.ssh/id_ed25519
     ssh_user: str = "root"
-    # readiness
+    # readiness. Defaults resolve in __post_init__: 300s/420s normally, but
+    # 1200s each when docker_start_cmd is set — a bootstrap that apt-installs
+    # its way to sshd routinely needs 5-15 min before the pod is reachable,
+    # and the wait loops exit early on success so a generous cap is free.
     ready: ReadyProbe = field(default_factory=lambda: SshProbe("true"))
-    provision_timeout: timedelta = timedelta(seconds=300)
-    ready_timeout: timedelta = timedelta(seconds=420)
+    provision_timeout: timedelta | None = None
+    ready_timeout: timedelta | None = None
     poll_interval: float = 8.0
     # native server-side safety timers (GraphQL only; survive host death).
     # stop = halt compute (disk persists); terminate = delete (all billing stops).
@@ -128,6 +131,11 @@ class PodConfig:
     max_lifetime: timedelta | None = None
 
     def __post_init__(self):
+        slow_boot = bool(self.docker_start_cmd)
+        if self.provision_timeout is None:
+            self.provision_timeout = timedelta(seconds=1200 if slow_boot else 300)
+        if self.ready_timeout is None:
+            self.ready_timeout = timedelta(seconds=1200 if slow_boot else 420)
         if self.max_lifetime is not None:
             self.terminate_after = self.max_lifetime
             # the default 24h stop timer would halt a longer job early
@@ -425,7 +433,12 @@ async def _gql_create(config: PodConfig, api_key: str | None) -> dict:
     if config.cloud == "COMMUNITY" and config.cloud_fallback:
         clouds.append("SECURE")
     async with RunpodGraphQL(api_key=api_key) as gql:
-        last_err: ProvisionError | None = None
+        # Report every attempt, not just the last: RunPod's GraphQL error
+        # strings are opaque ("Something went wrong", "This machine does not
+        # have the resources"), and a bare last_err hides that other
+        # cloud/GPU combinations were tried and failed differently — which
+        # sent issue #27 chasing dockerArgs when the real story was capacity.
+        errors: list[str] = []
         for cloud in clouds:
             for gid in candidates:
                 gi = config.to_graphql_input(gpu_type_id=gid)
@@ -433,9 +446,11 @@ async def _gql_create(config: PodConfig, api_key: str | None) -> dict:
                 try:
                     return await gql.create_pod_on_demand(gi)
                 except ProvisionError as e:
-                    last_err = e
-        assert last_err is not None
-        raise last_err
+                    errors.append(f"{gid} on {cloud}: {e}")
+        raise ProvisionError(
+            "graphql create failed on every cloud/GPU attempt:\n  "
+            + "\n  ".join(errors)
+        )
 
 
 @contextlib.asynccontextmanager

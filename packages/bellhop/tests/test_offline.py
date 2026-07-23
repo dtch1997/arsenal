@@ -117,6 +117,29 @@ def test_max_lifetime_clears_stop_after():
     assert replace(cfg, name="x").stop_after is None
 
 
+def test_readiness_timeout_defaults():
+    cfg = _cfg(gpu="A100")
+    assert cfg.provision_timeout == timedelta(seconds=300)
+    assert cfg.ready_timeout == timedelta(seconds=420)
+
+
+def test_readiness_timeouts_widen_for_docker_start_cmd():
+    # a bootstrap that apt-installs sshd routinely needs 5-15 min (issue #27)
+    cfg = _cfg(gpu="A100", docker_start_cmd="apt-get install -y openssh-server && /usr/sbin/sshd -D")
+    assert cfg.provision_timeout == timedelta(seconds=1200)
+    assert cfg.ready_timeout == timedelta(seconds=1200)
+
+
+def test_readiness_timeout_explicit_wins_over_docker_start_cmd():
+    from dataclasses import replace
+    cfg = _cfg(gpu="A100", docker_start_cmd="sleep infinity",
+               provision_timeout=timedelta(seconds=60), ready_timeout=timedelta(seconds=90))
+    assert cfg.provision_timeout == timedelta(seconds=60)
+    assert cfg.ready_timeout == timedelta(seconds=90)
+    # resolved values are concrete, so replace() keeps them
+    assert replace(cfg, name="x").ready_timeout == timedelta(seconds=90)
+
+
 def test_max_lifetime_maps_to_modal_timeout():
     kw = _create_kwargs(ModalConfig(max_lifetime=timedelta(hours=8)))
     assert kw["timeout"] == 8 * 3600
@@ -431,6 +454,39 @@ def test_cloud_fallback_reports_both_errors(tmp_path, monkeypatch):
 
     with pytest.raises(ProvisionError, match="COMMUNITY.*SECURE fallback"):
         asyncio.run(_go())
+
+
+def test_gql_create_reports_every_attempt(tmp_path, monkeypatch):
+    # RunPod's GraphQL errors are opaque one-liners; raising only the last
+    # attempt's error hid the COMMUNITY/SECURE ladder entirely (issue #27).
+    import asyncio
+    import importlib
+
+    podmod = importlib.import_module("bellhop.pod")
+
+    class _FakeGql:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            pass
+
+        async def create_pod_on_demand(self, gi):
+            raise ProvisionError(
+                f"graphql error: no dice for {gi['gpuTypeId']} on {gi['cloudType']}"
+            )
+
+    monkeypatch.setattr(podmod, "RunpodGraphQL", _FakeGql)
+    cfg = PodConfig(gpu="H100", ssh_key=_tmp_ssh_key(tmp_path))  # default TTL -> gql path
+    with pytest.raises(ProvisionError) as ei:
+        asyncio.run(podmod._gql_create(cfg, api_key="x"))
+    msg = str(ei.value)
+    # every candidate on both clouds, not just the final attempt
+    for gid in cfg.resolve_gpu_ids():
+        assert f"{gid} on COMMUNITY" in msg and f"{gid} on SECURE" in msg
 
 
 def test_cpu_pod_with_ttl_warns(tmp_path, monkeypatch):
