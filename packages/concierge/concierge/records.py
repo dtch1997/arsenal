@@ -108,7 +108,8 @@ def load_config(home: "Home") -> dict:
 
 
 def new_task(tid, title, gate, budget, workspace, priority=0, notify=None,
-             max_attempts=3, output_schema=None) -> dict:
+             max_attempts=3, output_schema=None, parent=None, depth=0,
+             model=None) -> dict:
     return {
         "id": tid,
         "title": title,
@@ -116,6 +117,12 @@ def new_task(tid, title, gate, budget, workspace, priority=0, notify=None,
         "workspace": workspace,
         "gate": gate,
         "budget": budget,
+        # delegation lineage (trees & leaves): parent tid, tree depth. Children
+        # are discovered by scanning for parent == tid — no denormalized list.
+        "parent": parent,
+        "depth": depth,
+        # per-task model override (None = SDK default); the leaf-economics knob
+        "model": model,
         "output_schema": output_schema,
         "output": None,
         "result_text": None,

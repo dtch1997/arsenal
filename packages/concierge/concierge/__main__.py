@@ -1,9 +1,11 @@
 """Shell shims. The Python API (concierge.Pool) is the interface; these exist
-because two things must be reachable from a shell: the worker's blocked-signal
-and launching the daemon."""
+because three things must be reachable from a shell: the worker's
+blocked-signal, launching the daemon, and the delegation wake probe (it runs
+inside a signal_waiting `until_shell`)."""
 import argparse
 import asyncio
 
+from . import delegation
 from .api import Pool
 
 
@@ -22,12 +24,19 @@ def main():
     p.add_argument("--concurrency", type=int, default=None)
     p.add_argument("--exit-when-idle", action="store_true", dest="exit_when_idle")
 
+    p = sub.add_parser("probe-children",
+                       help="wake probe for a delegating parent: exit 0 iff the "
+                            "task's children all reached a terminal state")
+    p.add_argument("id")
+
     args = ap.parse_args()
     overrides = {"concurrency": args.concurrency} if getattr(args, "concurrency", None) else {}
     pool = Pool(args.home, **overrides)
     if args.cmd == "msg":
         pool.msg(args.id, args.text, sender=args.sender)
         print(f"posted to {args.id} mailbox (from {args.sender})")
+    elif args.cmd == "probe-children":
+        raise SystemExit(delegation.probe_children(pool.home, args.id))
     else:
         asyncio.run(pool.serve(exit_when_idle=args.exit_when_idle, interval=args.interval))
 

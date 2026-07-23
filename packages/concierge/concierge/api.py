@@ -86,12 +86,14 @@ class Pool:
 
     def submit(self, spec, *, title=None, repo=None, base="main", branch=None,
                access="readwrite", gate=None, output=None, budget_usd=20.0,
-               budget_minutes=240.0, priority=0, max_attempts=3, notify=None) -> str:
+               budget_minutes=240.0, priority=0, max_attempts=3, notify=None,
+               model=None) -> str:
         """Enqueue a task; returns its id. `spec` is Markdown text, or a Path
         (or existing *.md path string) to read it from. `gate` is a Gate
         object (concierge.gates), default Always(). `output` declares the
         task's structured-output type: a JSON schema dict or an annotated
-        class (dataclass/TypedDict)."""
+        class (dataclass/TypedDict). `model` pins the worker's model (default:
+        the SDK's default model)."""
         tid = new_id()
         task = new_task(
             tid,
@@ -104,6 +106,7 @@ class Pool:
             notify=notify,
             max_attempts=max_attempts,
             output_schema=_normalize_schema(output),
+            model=model,
         )
         self.home.spec_path(tid).write_text(_spec_text(spec))
         self.home.save(task)
@@ -176,6 +179,13 @@ class Pool:
 
     def tasks(self) -> list[dict]:
         return self.home.tasks()
+
+    def tree(self, tid) -> dict:
+        """The task's delegation subtree: {"task": record, "children": [subtrees]}."""
+        from . import delegation
+        return {"task": self.get(tid),
+                "children": [self.tree(c["id"])
+                             for c in delegation.children(self.home, tid)]}
 
     def msg(self, tid, text, sender="user") -> dict:
         self.home.load(tid)  # validate id
