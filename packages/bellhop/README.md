@@ -208,6 +208,34 @@ specs = [replace(base, slug=f"lr{lr}", run=f"python train.py --lr {lr}")
 results = await run_many(specs, gpu_cfg, max_concurrency=4)
 ```
 
+## Multi-node: RunPod Instant Clusters
+
+For jobs one node can't hold (100B-scale training), `run_cluster` is the
+N-node sibling of `run`: same `RunSpec`, but the job runs on every rank
+concurrently with the full distributed env injected (`NODE_RANK`,
+`PRIMARY_ADDR`/`MASTER_ADDR`, `WORLD_SIZE`, `NCCL_SOCKET_IFNAME=ens1`, …) —
+bellhop derives the rendezvous itself, since RunPod's documented `PRIMARY_*`
+injection doesn't actually happen. Results are pulled from rank 0.
+
+```python
+from bellhop import ClusterConfig, RunSpec, run_cluster
+
+spec = RunSpec(slug="train-100b", codebase="./code",
+               run='torchrun --nnodes "$NUM_NODES" --node_rank "$NODE_RANK" '
+                   '--nproc_per_node "$NUM_TRAINERS" --rdzv_backend static '
+                   '--rdzv_endpoint "$PRIMARY_ADDR:$PRIMARY_PORT" train.py')
+res = await run_cluster(spec, ClusterConfig(gpu="H200", nodes=4, gpu_count=8))
+```
+
+Lower-level, `async with cluster(config) as clu:` yields a `Cluster` whose
+`nodes` are ordinary `Pod` channels indexed by rank (`exec_all` / `push_all` /
+`pull`). Pricing is auto-bid: RunPod requires a `deployCost` and only reveals
+the minimum in a rejection error, so bellhop bids that minimum (× nodes),
+capped by `max_hourly_cost`. **Clusters have no server-side TTL** — teardown
+is the context manager plus a client-side `max_lifetime` watchdog; sweep up
+leaks with `bellhop clusters list` / `bellhop clusters gc --older-than-hours N`.
+Design + live-probe findings: `docs/design/instant-clusters.md`.
+
 ## Cleanup: two layers
 
 | When | Handled by |

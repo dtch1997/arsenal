@@ -343,8 +343,13 @@ NCCL all-reduce **OK** → `deleteCluster` → account clean. 103 s wall.
 
 - **M0 — probe. DONE 2026-08-10** (`scripts/probe_clusters.py`, findings in
   §6). Rerun any time; a full cycle costs ~$0.20 and 2 minutes.
-- **M1 — bellhop `cluster.py`** (+ offline tests mocking GraphQL/REST, +
-  `bellhop clusters gc`). Ship as bellhop 0.8.0.
+- **M1 — bellhop `cluster.py`. DONE 2026-08-10** (bellhop 0.8.0):
+  `ClusterConfig` / `Cluster` / `cluster()` / `run_cluster` /
+  `list_clusters` / `gc_clusters` + `bellhop clusters list|gc` CLI, 13
+  offline tests, and a live e2e (`scripts/e2e_cluster.py`) that **passed in
+  58 s** — full pipeline (auto-bid create → rank discovery → push_all →
+  torchrun all-reduce off injected env → rank-0 pull → cascade teardown)
+  on a real 2-node H100 cluster.
 - **M2 — scimt `ClusterExecutor` + smoke.** Gemma-3-12B midtrain stage on a
   2-node H100/H200 cluster; acceptance = loss curve matches the single-node
   baseline run at equal effective global batch, and checkpoints land on GCS.

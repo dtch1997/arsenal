@@ -2,6 +2,15 @@
 
 from .backend import ExecBox, ExecResult, open_box
 from .call import call
+from .cluster import (
+    Cluster,
+    ClusterConfig,
+    ClusterJobError,
+    cluster,
+    gc_clusters,
+    list_clusters,
+    run_cluster,
+)
 from .errors import (
     BellhopError,
     ExecTimeoutError,
@@ -29,6 +38,9 @@ __all__ = [
     # RunPod backend
     "pod", "Pod", "PodConfig", "IMAGE_PRESETS", "GPU_ALIASES",
     "RunpodRest", "RunpodGraphQL",
+    # RunPod Instant Clusters (multi-node)
+    "cluster", "Cluster", "ClusterConfig", "ClusterJobError",
+    "run_cluster", "list_clusters", "gc_clusters",
     "ReadyProbe", "SshProbe", "TcpProbe", "HttpProbe", "LogMarkerProbe",
     # Modal backend
     "sandbox", "Sandbox", "ModalConfig",
