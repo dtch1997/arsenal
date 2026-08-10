@@ -1,13 +1,28 @@
 # bellhop
 
-**Run your code on a disposable cloud GPU (or CPU) box — provision, execute,
-bring results back, tear down.** An async Python library with two backends:
-[RunPod](https://runpod.io) pods and [Modal](https://modal.com) sandboxes.
+[![PyPI](https://img.shields.io/pypi/v/bellhop-py?color=blue)](https://pypi.org/project/bellhop-py/)
+[![Python](https://img.shields.io/pypi/pyversions/bellhop-py)](https://pypi.org/project/bellhop-py/)
+[![CI](https://github.com/dtch1997/arsenal/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dtch1997/arsenal/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-Like a hotel bellhop: it books a room (provisions the box), waits until it's
-actually ready, carries your luggage up (uploads your code), and when you
-leave it brings your bags back down (pulls results) and checks out (tears the
-box down) — so you never leave a box (or a bill) running by accident.
+**Run your code on a disposable cloud GPU — provision, execute, bring results
+back, tear down.** Async Python, two interchangeable backends:
+[RunPod](https://runpod.io) pods and [Modal](https://modal.com) sandboxes.
+Scales from one CPU box to a multi-node H200 cluster without changing shape.
+
+```python
+from bellhop import pod, PodConfig
+
+async with pod(PodConfig(gpu="H100")) as p:
+    await p.push("./mycode", "/workspace/job")
+    await p.exec("cd /workspace/job && python train.py")
+    await p.pull("/workspace/job/out", "./results")
+# the pod is gone here — even if the body raised.
+# No orphaned boxes, no surprise bills.
+```
+
+Like a hotel bellhop: books the room, waits until it's *actually* ready,
+carries your luggage up, brings your bags back down, and checks out for you.
 
 ## Quick start
 
