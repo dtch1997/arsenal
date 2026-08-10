@@ -8,11 +8,18 @@ there), and a short tail of the screen as a preview.
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import subprocess
 from pathlib import Path
 
 _SEP = "\x1f"  # unit separator: never appears in tmux format output naturally
+
+# tmux >=3.4 vis-escapes control bytes in `-F` output, so the raw \x1f we put
+# between fields comes back as the literal four characters `\037` (its octal
+# escape); tmux <=3.2a emits the raw byte. Split on either form so a session's
+# fields don't collapse into one, which silently emptied the whole sidebar.
+_SEP_SPLIT = re.compile(r"\x1f|\\037")
 
 
 def tmux_cmd() -> list[str]:
@@ -99,7 +106,7 @@ def list_sessions(with_preview: bool = True) -> list[dict]:
         return []  # no tmux server running yet
     out: dict[str, dict] = {}
     for line in raw.splitlines():
-        parts = line.split(_SEP)
+        parts = _SEP_SPLIT.split(line)
         if len(parts) != len(_FIELDS):
             continue
         (name, created, attached, activity,
