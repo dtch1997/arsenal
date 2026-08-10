@@ -46,6 +46,7 @@ CAPACITY_SIGNATURES = (
     "no longer any instances available", # rest out-of-stock
     "out of stock",
     "no instances",
+    "insufficient resources",            # createCluster out-of-stock (M0 probe)
 )
 
 
