@@ -91,6 +91,10 @@ def report(tag: str, msg: str) -> None:
     print(f"[{time.strftime('%H:%M:%S')}] {tag}: {msg}", flush=True)
 
 
+# cap on what we'll pay per node-hour before skipping a rung (2 nodes ⇒ 2×)
+MAX_DEPLOY_COST = 4.0
+
+
 async def create_cluster(gql: RunpodGraphQL, pubkey: str) -> tuple[dict, int]:
     last_err = None
     for gpu_id, per_pod in LADDER:
@@ -105,15 +109,32 @@ async def create_cluster(gql: RunpodGraphQL, pubkey: str) -> tuple[dict, int]:
             "startSsh": True,
             "env": [{"key": "PUBLIC_KEY", "value": pubkey}],
         }
-        report("create", f"trying {gpu_id} x{per_pod}/node ...")
-        try:
-            data = await gql._post(CREATE_CLUSTER, {"input": inp})
-            clu = data["createCluster"]
-            report("create", f"OK id={clu['id']} name={clu['name']} pods={[p['id'] for p in clu['pods']]}")
-            return clu, per_pod
-        except Exception as e:  # noqa: BLE001 — ladder walks past stock/rule rejections
-            last_err = e
-            report("create", f"rejected: {e}")
+        # two attempts per rung: without deployCost the error leaks the current
+        # minimum per-node $/hr ("requested price 0 is less than the current
+        # minimum price (1.39)"); second attempt pays exactly that.
+        for attempt in range(2):
+            report("create", f"trying {gpu_id} x{per_pod}/node "
+                             f"(deployCost={inp.get('deployCost', 'unset')}) ...")
+            try:
+                data = await gql._post(CREATE_CLUSTER, {"input": inp})
+                clu = data["createCluster"]
+                report("create", f"OK id={clu['id']} name={clu['name']} "
+                                 f"pods={[p['id'] for p in clu['pods']]} "
+                                 f"deployCost={inp.get('deployCost')}/node-hr")
+                return clu, per_pod
+            except Exception as e:  # noqa: BLE001 — ladder walks past stock/rule rejections
+                last_err = e
+                report("create", f"rejected: {e}")
+                m = re.search(r"minimum price \(([\d.]+)\)", str(e))
+                # the server divides deployCost by podCount before comparing to
+                # the per-node minimum (bid 1.39 → "requested price 0.695"),
+                # so deployCost prices the whole cluster
+                if attempt == 0 and m and float(m.group(1)) <= MAX_DEPLOY_COST:
+                    inp["deployCost"] = round(float(m.group(1)) * inp["podCount"], 2)
+                    continue
+                if m and float(m.group(1)) > MAX_DEPLOY_COST:
+                    report("create", f"skipping rung: min {m.group(1)}/node-hr > cap {MAX_DEPLOY_COST}")
+                break
     raise SystemExit(f"Q4: no ladder rung accepted — last error: {last_err}")
 
 
@@ -142,37 +163,49 @@ async def main() -> None:
             report("ready", f"ssh up on both pods ({time.monotonic()-t0:.0f}s from create)")
 
             # ---- Q1: env visibility --------------------------------------
+            # first probe found PRIMARY_ADDR/PRIMARY_PORT/MASTER_* absent even
+            # in PID-1 env (only NODE_RANK/NODE_ADDR/NUM_*/WORLD_SIZE present),
+            # so also check /etc/rp_environment and /etc/environment
             probe = (
                 f'echo "SSH_SESSION:"; env | grep -E "^({ENV_PAT})=" || echo "  (none)"; '
-                f'echo "PID1:"; tr "\\0" "\\n" < /proc/1/environ | grep -E "^({ENV_PAT})=" || echo "  (none)"'
+                f'echo "PID1:"; tr "\\0" "\\n" < /proc/1/environ | grep -E "^({ENV_PAT})=" || echo "  (none)"; '
+                f'echo "RP_ENV_FILE:"; grep -hE "({ENV_PAT})" /etc/rp_environment /etc/environment 2>/dev/null || echo "  (none)"'
             )
             envs = await asyncio.gather(*(p.exec(probe, timeout=60) for p in pods))
             ranks: dict[str, int] = {}
+            node_ips: dict[int, str] = {}
             for p, r in zip(pods, envs):
                 report("env", f"pod {p.id}:\n{r.stdout}")
                 m = re.search(r"NODE_RANK=(\d+)", r.stdout)
                 if m:
                     ranks[p.id] = int(m.group(1))
+                a = re.search(r"NODE_ADDR=([\d.]+)", r.stdout)  # strips the /24 suffix
+                if m and a:
+                    node_ips[int(m.group(1))] = a.group(1)
                 ssh_part = r.stdout.split("PID1:")[0]
                 findings.setdefault(
                     "Q1",
                     "ssh session inherits cluster env"
                     if "NODE_RANK=" in ssh_part else
-                    "NOT in ssh session; present in /proc/1/environ (use preamble)")
+                    "NOT in ssh session; present in /proc/1/environ (use preamble); "
+                    "PRIMARY_ADDR/PORT absent everywhere — derive from rank-0 NODE_ADDR")
             if len(ranks) < 2:
                 findings["Q1"] += " — WARNING: NODE_RANK not found on both pods"
-            report("ranks", str(ranks))
+            report("ranks", f"{ranks} ips={node_ips}")
 
-            # ---- functional: all-reduce over ens1 ------------------------
+            # ---- functional: all-reduce over the overlay network ---------
+            # rendezvous is self-derived: rank-0's NODE_ADDR + a fixed port —
+            # more robust than trusting PRIMARY_ADDR injection anyway
+            primary_ip = node_ips[0]
             script = (
                 f"{ENV_PREAMBLE}\n"
                 "export NCCL_SOCKET_IFNAME=ens1 NCCL_DEBUG=WARN\n"
                 f"cat > /tmp/allreduce.py <<'PYEOF'\n{ALLREDUCE_PY}\nPYEOF\n"
                 f"torchrun --nnodes 2 --node_rank $NODE_RANK --nproc_per_node {per_pod} "
                 "--rdzv_id m0probe --rdzv_backend static "
-                '--rdzv_endpoint "$PRIMARY_ADDR:$PRIMARY_PORT" /tmp/allreduce.py'
+                f'--rdzv_endpoint "{primary_ip}:29500" /tmp/allreduce.py'
             )
-            report("allreduce", "launching torchrun on both nodes ...")
+            report("allreduce", f"launching torchrun on both nodes (rdzv {primary_ip}:29500) ...")
             results = await asyncio.gather(
                 *(p.exec(script, timeout=600) for p in pods), return_exceptions=True)
             ok = True

@@ -33,6 +33,13 @@ mutation createCluster($input: CreateClusterInput!) {
 #   gpuCountPerPod: Int!           # 8 for a full node
 #   type:           ClusterType!   # TRAINING | SLURM | RAY
 # optional:
+#   deployCost:     Float          # REQUIRED in practice: $/hr for the WHOLE
+#                                  # cluster; server divides by podCount and
+#                                  # compares to the per-node minimum. Omitting
+#                                  # it bids 0 → rejected with an error that
+#                                  # leaks the current minimum ("requested
+#                                  # price 0 is less than the current minimum
+#                                  # price (3.29)") — bid min × podCount.
 #   templateId, imageName: String
 #   env: [EnvironmentVariableInput]     # {key, value}
 #   dataCenterId: String
@@ -261,6 +268,10 @@ Minimal-diff plan against `src/scimt/train/axolotl.py`:
             -m axolotl.cli.train <rendered.yaml>
    ```
 
+   where `PRIMARY_ADDR`/`PRIMARY_PORT` are **injected by bellhop's
+   `exec_all`** (rank-0 `NODE_ADDR` + fixed port), not read from RunPod —
+   M0 showed RunPod doesn't actually inject them (§6 Q1).
+
    (today the stage runs bare `axolotl train`, which launches
    single-node accelerate internally).
 3. Stage-template changes for 100B:
@@ -297,28 +308,41 @@ Clusters bill per node-hour with no server-side kill switch, so a leaked
 
 ---
 
-## 6. Open questions → resolved by M0 probe
+## 6. Open questions — ANSWERED by M0 probe (2026-08-10, live)
 
-1. **Env-var visibility over SSH.** RunPod injects the cluster env into the
-   container's PID 1; bellhop exec's SSH sessions may not inherit it.
-   Fallback (build into the exec preamble): `export $(tr '\0' '\n' <
-   /proc/1/environ | grep -E '^(PRIMARY|MASTER|NODE|NUM_|WORLD|HOST_)')`.
-2. **`deleteCluster` cascade** — do member pods die with the cluster?
-3. **Per-node public IP + SSH.** `startSsh` exists on the input and our
-   images bootstrap sshd; confirm every member pod gets its own public
-   IP/port-22 mapping (docs only show the web terminal).
-4. **Availability & spend limit** — can this account actually get a 2-node
-   H200 TRAINING cluster on demand; what's our cluster spending cap; real
-   cluster $/hr vs pod pricing.
-5. **`imageName` with a custom image** (`ghcr.io/arcadiaimpact/scimt-pod`) —
-   accepted on clusters, or template-only?
+`scripts/probe_clusters.py` ran the full cycle three times (~$0.40 total);
+final run: create → both pods SSH-routable in 82 s → env probe → cross-node
+NCCL all-reduce **OK** → `deleteCluster` → account clean. 103 s wall.
+
+1. **Env-var visibility over SSH: NOT inherited** — cluster env lives only in
+   `/proc/1/environ` (no `/etc/rp_environment` on cluster pods). Exec
+   preamble required:
+   `while read -r kv; do export "$kv"; done < <(tr '\0' '\n' < /proc/1/environ | grep -E '^(NODE_|NUM_|WORLD_)')`.
+   **Bigger finding: `PRIMARY_ADDR`/`PRIMARY_PORT`/`MASTER_*` are not
+   injected at all** (docs notwithstanding) — only `NODE_RANK`, `NODE_ADDR`
+   (CIDR-suffixed, e.g. `10.65.0.2/24`), `NUM_NODES`, `NUM_TRAINERS`,
+   `WORLD_SIZE`. Bellhop must derive the rendezvous itself: rank-0's
+   `NODE_ADDR` stripped of `/24` + a fixed port (29500). Verified working;
+   also more robust than trusting injection.
+2. **`deleteCluster` cascade: YES** — member pods gone within ~10 s, nothing
+   to clean up individually.
+3. **Per-node public IP + SSH: YES** — each member pod gets its own
+   `publicIp` + port-22 mapping; bellhop's existing `Pod` channel works
+   unmodified per node.
+4. **Availability/pricing (this account, EU-ish stock at probe time):**
+   cluster minimums leaked by the pricing error: A100-PCIe $1.39, A100-SXM
+   $1.59, H100-SXM $3.29 per GPU·hr (≈ pod on-demand rates). A100 2-node
+   stock was absent ("Insufficient resources"); H100 2-node available
+   instantly. 1-GPU-per-node clusters ARE allowed (cheap smoke tests!).
+   H200/B200 rungs not yet probed.
+5. **Custom `imageName`: accepted** (probe used `runpod/pytorch:2.4.0`; the
+   `PUBLIC_KEY` env → sshd path works exactly as on single pods). Note the
+   cluster `name` is server-derived (from the image; there is no name input).
 
 ## 7. Milestones
 
-- **M0 — probe (½ day, ~$10–20).** `scripts/probe_clusters.py` (same style
-  as `probe_issue27.py`): create the cheapest 2-node cluster via the GraphQL
-  contract above → answer §6 → run a 30-line `torch.distributed` all-reduce
-  across nodes over `ens1` → `deleteCluster` → confirm pods gone.
+- **M0 — probe. DONE 2026-08-10** (`scripts/probe_clusters.py`, findings in
+  §6). Rerun any time; a full cycle costs ~$0.20 and 2 minutes.
 - **M1 — bellhop `cluster.py`** (+ offline tests mocking GraphQL/REST, +
   `bellhop clusters gc`). Ship as bellhop 0.8.0.
 - **M2 — scimt `ClusterExecutor` + smoke.** Gemma-3-12B midtrain stage on a
