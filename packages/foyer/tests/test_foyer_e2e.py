@@ -43,6 +43,20 @@ def env(tmp_path, request):
     tmux = e["FOYER_TMUX"].split()
     subprocess.run([*tmux, "new-session", "-d", "-s", SESSION, "-c", str(tmp_path)],
                    check=True)
+    # Put deterministic content on the pane and wait for it to paint: a fresh
+    # session's shell may not have drawn its prompt yet, and capture-pane of a
+    # blank screen makes the sidebar preview legitimately empty (flaky assert).
+    subprocess.run([*tmux, "send-keys", "-t", f"={SESSION}:",
+                    "echo pane-ready", "Enter"], check=True)
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        cap = subprocess.run([*tmux, "capture-pane", "-p", "-t", f"={SESSION}:"],
+                             capture_output=True, text=True)
+        if "pane-ready" in cap.stdout:
+            break
+        time.sleep(0.1)
+    else:
+        pytest.fail("tmux pane never painted")
     try:
         yield e
     finally:
