@@ -229,6 +229,33 @@ Supported shapes: H100/H200/B200 (3200 Gbps interconnect) and A100
 (1600 Gbps), 2–8 nodes. Full API contract and live-probe findings:
 [`docs/design/instant-clusters.md`](docs/design/instant-clusters.md).
 
+### Multi-node on Nebius
+
+The same `run_cluster()` / `Cluster` surface also provisions on **Nebius AI
+Cloud** — hand it a `NebiusClusterConfig` instead (`pip install
+'bellhop-py[nebius]'`; auth via `NEBIUS_IAM_TOKEN`, project via
+`NEBIUS_PROJECT_ID`):
+
+```python
+from bellhop import NebiusClusterConfig, run_cluster
+
+config = NebiusClusterConfig(
+    fabric="fabric-7",            # region-specific InfiniBand fabric id
+    gpu="H200", nodes=8, gpu_count=8,
+    preemptible=False,            # True = the cheaper interruptible tier
+)
+res = await run_cluster(spec, config)
+```
+
+Differences from the RunPod path, handled for you: nodes are VMs built from a
+CUDA image family (ssh access injected via cloud-init, no `PUBLIC_KEY`
+convention), all instances join one `GpuCluster` pinned to a physical
+InfiniBand fabric, prices are posted rather than auctioned (no bidding), and
+ranks are assigned at creation (`NODE_RANK` etc. are injected identically).
+There's no server-side TTL here either — the context manager + `max_lifetime`
+watchdog own teardown, and `gc_nebius(older_than=...)` reaps leaks by the
+`bellhop` name prefix.
+
 ## Backends & configuration
 
 Both backends implement the same contract (`exec` / `push` / `pull` /

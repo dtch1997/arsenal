@@ -26,6 +26,7 @@ from .errors import (
 )
 from .graphql import RunpodGraphQL
 from .modal_box import ModalConfig, Sandbox, sandbox
+from .nebius_box import NebiusClusterConfig, NebiusNode, gc_nebius, nebius_cluster
 from .pod import GPU_ALIASES, IMAGE_PRESETS, Pod, PodConfig, pod
 from .probes import HttpProbe, LogMarkerProbe, ReadyProbe, SshProbe, TcpProbe
 from .rest import RunpodRest
@@ -44,6 +45,8 @@ __all__ = [
     "ReadyProbe", "SshProbe", "TcpProbe", "HttpProbe", "LogMarkerProbe",
     # Modal backend
     "sandbox", "Sandbox", "ModalConfig",
+    # Nebius backend (multi-node)
+    "nebius_cluster", "NebiusClusterConfig", "NebiusNode", "gc_nebius",
     # errors
     "BellhopError", "RunpodError", "PreflightError", "ProvisionError", "PodNotReadyError",
     "RemoteJobError", "ExecTimeoutError", "RemoteCallError", "ResultsMissingError",

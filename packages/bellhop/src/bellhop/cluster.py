@@ -167,11 +167,19 @@ class Cluster:
     """A live Instant Cluster. Construct via :func:`cluster`."""
 
     def __init__(self, cluster_id: str, nodes: list[Pod], node_ips: dict[int, str],
-                 rendezvous_port: int = DEFAULT_RDZV_PORT):
+                 rendezvous_port: int = DEFAULT_RDZV_PORT,
+                 nccl_socket_ifname: str | None = "ens1",
+                 workdir: str = "/workspace"):
         self.id = cluster_id
         self.nodes = nodes                     # index == NODE_RANK
         self.node_ips = node_ips               # rank -> overlay IP (no CIDR suffix)
         self.rendezvous_port = rendezvous_port
+        # bootstrap NIC for NCCL's out-of-band traffic. RunPod's default is the
+        # "ens1" overlay NIC; other backends pass their own (None = NCCL picks).
+        self.nccl_socket_ifname = nccl_socket_ifname
+        # where run_cluster stages jobs; must be writable by the ssh user
+        # (RunPod containers are root, Nebius VMs use an unprivileged user)
+        self.workdir = workdir
 
     @property
     def primary(self) -> Pod:
@@ -187,7 +195,7 @@ class Cluster:
         primary = self.node_ips[0]
         n = len(self.nodes)
         per = str(self.nodes[rank].config.gpu_count)
-        return {
+        env = {
             "PRIMARY_ADDR": primary, "MASTER_ADDR": primary,
             "PRIMARY_PORT": str(self.rendezvous_port), "MASTER_PORT": str(self.rendezvous_port),
             "HOST_NODE_ADDR": f"{primary}:{self.rendezvous_port}",
@@ -196,9 +204,11 @@ class Cluster:
             "NUM_NODES": str(n),
             "NUM_TRAINERS": per,
             "WORLD_SIZE": str(n * int(per)),
-            # inter-node traffic must use the overlay NICs, never eth0
-            "NCCL_SOCKET_IFNAME": "ens1",
         }
+        if self.nccl_socket_ifname:
+            # on RunPod inter-node traffic must use the overlay NICs, never eth0
+            env["NCCL_SOCKET_IFNAME"] = self.nccl_socket_ifname
+        return env
 
     async def exec_all(self, cmd: str, *, env: dict[str, str] | None = None,
                        timeout: float | None = None) -> list[ExecResult]:
@@ -351,7 +361,7 @@ async def cluster(config: ClusterConfig, *, api_key: str | None = None):
         await rest.aclose()
 
 
-async def run_cluster(spec: RunSpec, config: ClusterConfig, *,
+async def run_cluster(spec: RunSpec, config, *,
                       api_key: str | None = None) -> RunResult:
     """One-shot multi-node pipeline; the N-node sibling of :func:`bellhop.run`.
 
@@ -360,6 +370,11 @@ async def run_cluster(spec: RunSpec, config: ClusterConfig, *,
     ``torchrun --node_rank $NODE_RANK ... --rdzv_endpoint
     $PRIMARY_ADDR:$PRIMARY_PORT`` invocation or equivalent), pulls
     ``results_subdir`` from rank 0, optionally uploads to GCS.
+
+    Like :func:`bellhop.backend.open_box`, the provider is picked from the
+    config type: ``ClusterConfig`` -> RunPod Instant Cluster,
+    ``NebiusClusterConfig`` -> Nebius GPU cluster (``api_key`` is RunPod-only;
+    Nebius auths via the SDK / ``NEBIUS_IAM_TOKEN``).
     """
     if not (spec.slug and spec.codebase and spec.run):
         raise PreflightError("slug, codebase and run are all required")
@@ -368,12 +383,23 @@ async def run_cluster(spec: RunSpec, config: ClusterConfig, *,
     if not Path(spec.codebase).is_dir():
         raise PreflightError(f"codebase dir not found: {spec.codebase}")
 
+    if isinstance(config, ClusterConfig):
+        ctx = cluster(config, api_key=api_key)
+    else:
+        from .nebius_box import NebiusClusterConfig, nebius_cluster
+
+        if not isinstance(config, NebiusClusterConfig):
+            raise PreflightError(
+                f"unknown cluster config {type(config).__name__!r}; "
+                "expected ClusterConfig (RunPod) or NebiusClusterConfig (Nebius)")
+        ctx = nebius_cluster(config)
+
     local_out = spec.local_out or os.path.join(os.getcwd(), "experiments", spec.slug)
     Path(local_out).mkdir(parents=True, exist_ok=True)
-    run_dir = f"/workspace/{spec.slug}"
-    results_remote = f"{run_dir}/{spec.results_subdir}"
 
-    async with cluster(config, api_key=api_key) as clu:
+    async with ctx as clu:
+        run_dir = f"{clu.workdir}/{spec.slug}"
+        results_remote = f"{run_dir}/{spec.results_subdir}"
         await clu.exec_all(f"mkdir -p {shlex.quote(run_dir)}")
         await clu.push_all(spec.codebase, run_dir)
         job_results = await clu.exec_all(_job_script(spec, run_dir),
