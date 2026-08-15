@@ -1,5 +1,10 @@
 # ferry
 
+[![PyPI](https://img.shields.io/pypi/v/ferry-sync?color=blue)](https://pypi.org/project/ferry-sync/)
+[![Python](https://img.shields.io/pypi/pyversions/ferry-sync)](https://pypi.org/project/ferry-sync/)
+[![CI](https://github.com/dtch1997/arsenal/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dtch1997/arsenal/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
 Pythonic `push` / `pull` between your machine and any storage backend —
 GCS, S3, Drive, SFTP, … — in a couple of lines. Zero config for GCS and S3.
 
@@ -18,7 +23,7 @@ adds the ergonomic, convention-aware Python surface you actually want to call.
 ## Install
 
 ```bash
-pip install "ferry-sync @ git+https://github.com/dtch1997/arsenal#subdirectory=packages/ferry"
+pip install ferry-sync    # import name: ferry
 ```
 
 ferry needs the `rclone` binary at runtime. If it's missing, ferry can fetch
