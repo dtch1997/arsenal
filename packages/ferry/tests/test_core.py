@@ -101,6 +101,31 @@ def test_missing_rclone_raises(monkeypatch):
         ferry.push("d/", "gcs:b/")
 
 
+def test_gcs_pod_env_shape(monkeypatch):
+    def fake_run(cmd, capture_output=False, text=False, check=False):
+        assert cmd == ["gcloud", "auth", "application-default", "print-access-token"]
+        return subprocess.CompletedProcess(cmd, 0, stdout="tok123\n", stderr="")
+
+    monkeypatch.setattr(core.subprocess, "run", fake_run)
+    env = ferry.gcs_pod_env("weights")
+    assert env["RCLONE_CONFIG_WEIGHTS_TYPE"] == "google cloud storage"
+    assert env["RCLONE_CONFIG_WEIGHTS_BUCKET_POLICY_ONLY"] == "true"
+    import json
+    tok = json.loads(env["RCLONE_CONFIG_WEIGHTS_TOKEN"])
+    assert tok["access_token"] == "tok123"
+    assert tok["token_type"] == "Bearer"
+    assert tok["expiry"].endswith("Z")
+
+
+def test_gcs_pod_env_no_gcloud(monkeypatch):
+    def fake_run(cmd, **kw):
+        raise FileNotFoundError("gcloud")
+
+    monkeypatch.setattr(core.subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError, match="Application Default Credentials"):
+        ferry.gcs_pod_env()
+
+
 # --- cloud-URL endpoints (gs:// / s3://) ------------------------------------
 
 

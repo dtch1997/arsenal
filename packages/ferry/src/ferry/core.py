@@ -136,6 +136,47 @@ def ensure_rclone(dest_dir: str | Path | None = None) -> str:
     return str(dest)
 
 
+def gcs_pod_env(name: str = "gcs", *, ttl_minutes: int = 55) -> dict[str, str]:
+    """Short-lived GCS access for a remote machine, as rclone env-config vars.
+
+    Mints a ~1-hour OAuth access token from this machine's gcloud Application
+    Default Credentials and returns environment variables that define rclone
+    remote ``<name>:`` on any machine they are exported on — e.g. bellhop's
+    ``RunSpec(env=ferry.gcs_pod_env())``. The remote machine then uses plain
+    ferry/rclone with ``<name>:bucket/path`` endpoints.
+
+    The point over shipping a credentials *file*: no long-lived secret ever
+    leaves this box. The token cannot be refreshed remotely and access
+    self-expires when it does (~1 h — Google fixes the real TTL; ttl_minutes
+    only sets the expiry stamp rclone sees, so keep it under 60).
+    """
+    import datetime
+
+    try:
+        proc = subprocess.run(
+            ["gcloud", "auth", "application-default", "print-access-token"],
+            capture_output=True, text=True, check=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError) as e:
+        detail = e.stderr.strip()[-300:] if getattr(e, "stderr", None) else str(e)
+        raise RuntimeError(
+            "gcs_pod_env needs working gcloud Application Default Credentials "
+            f"on THIS machine (`gcloud auth application-default login`): {detail}"
+        ) from e
+    expiry = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=ttl_minutes)
+    token = {
+        "access_token": proc.stdout.strip(),
+        "token_type": "Bearer",
+        "expiry": expiry.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    prefix = f"RCLONE_CONFIG_{name.upper()}"
+    return {
+        f"{prefix}_TYPE": "google cloud storage",
+        f"{prefix}_TOKEN": json.dumps(token),
+        f"{prefix}_BUCKET_POLICY_ONLY": "true",
+    }
+
+
 def _is_remote(endpoint: str) -> bool:
     """True if ``endpoint`` is remote (cloud URL, ``remote:path``, or an
     on-the-fly ``:backend:path``), not a local path.
