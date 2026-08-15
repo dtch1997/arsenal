@@ -60,6 +60,16 @@ ferry.pull("gs://my-bucket/weights/big-model/", "/workspace/weights/",
            transfers=16)
 ```
 
+Credentials-wise you have two options. With a scoped service-account key,
+export `GOOGLE_APPLICATION_CREDENTIALS` on the pod and `gs://` URLs just
+work. Without one, `ferry.gcs_pod_env()` — run on your *local* machine —
+mints a short-lived (~1 h) access token from your gcloud ADC and returns env
+vars that define rclone remote `gcs:` wherever they're exported (e.g.
+bellhop's `RunSpec(env=ferry.gcs_pod_env())`); the pod then uses
+`gcs:bucket/path` endpoints. No long-lived secret leaves your machine and
+access self-expires; the flip side is the token can't refresh, so it only
+fits jobs that finish (or at least finish their transfers) within the hour.
+
 Preflight before committing to a multi-hundred-GB transfer:
 
 ```bash
@@ -154,6 +164,13 @@ pass are in its docstring — headline: ~195 MiB/s sustained, kill-resume left
 partial file restarts from zero — fine for sharded weights, slow for one
 giant file). Tiny-file trees are request-rate-bound (~130 objects/s): tar
 them before upload.
+
+`scripts/stress_pod.py` is the pod-tier version — the same suite on a fresh
+RunPod pod via bellhop, PyPI install, credentials via `gcs_pod_env()`. The
+2026-08-15 pass (RTX 4090, COMMUNITY cloud): bulk 7.1 GiB at ~57 MiB/s,
+kill-resume 110/110 files matching, clean teardown. At community-pod network
+speed a 200 GB pull is ~1 h — brushing the token TTL, so prefer a
+service-account key for the largest jobs.
 
 ## What ferry deliberately is not
 

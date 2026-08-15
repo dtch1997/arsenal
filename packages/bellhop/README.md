@@ -110,6 +110,37 @@ Good to know:
 - GCS upload happens from *your* machine — cloud credentials never touch the
   pod. Needs `gcloud` on your PATH.
 
+### Big data on the pod: pair with ferry
+
+bellhop's own transfer paths (codebase up, `results/` back) are tar-over-ssh
+through your machine — right for code and small results, wrong for weights.
+Bulk bytes should move **pod ↔ object store directly**; that's
+[ferry](../ferry)'s job (`pip install ferry-sync`), and the pairing is one
+line of env:
+
+```python
+import ferry
+
+RunSpec(
+    slug="train",
+    codebase="./mycode",
+    setup="pip install ferry-sync",
+    run="python -c \"import ferry; ferry.ensure_rclone(); "
+        "ferry.pull('gcs:my-bucket/weights/big-model/', '/workspace/weights/', transfers=16)\""
+        " && python train.py",
+    env=ferry.gcs_pod_env(),   # short-lived (~1h) GCS token as rclone env vars
+)
+```
+
+`ferry.gcs_pod_env()` mints a ~1-hour access token from your local gcloud ADC
+and exposes it to the pod as an rclone remote named `gcs:` — consistent with
+the credo above: no long-lived credential ever touches the pod, and access
+self-expires. (For jobs longer than an hour that must *upload* at the end,
+use a scoped service-account key via `RunSpec(env=...)` instead.) Measured
+throughput and resume semantics are in ferry's README stress section;
+`packages/ferry/scripts/stress_pod.py` is the runnable proof of this exact
+pairing.
+
 ## Interactive boxes
 
 Keep one box alive and run many steps against it:

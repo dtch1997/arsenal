@@ -15,6 +15,7 @@ from ferry.core import (
     RcloneNotFound,
     RcloneResult,
     ensure_rclone,
+    gcs_pod_env,
     listremotes,
     ls,
     pull,
@@ -29,6 +30,7 @@ __all__ = [
     "size",
     "Remote",
     "ensure_rclone",
+    "gcs_pod_env",
     "listremotes",
     "RcloneResult",
     "RcloneError",
@@ -36,4 +38,4 @@ __all__ = [
     "cas",
 ]
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
