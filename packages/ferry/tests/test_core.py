@@ -95,5 +95,65 @@ def test_is_remote_classification():
 
 def test_missing_rclone_raises(monkeypatch):
     monkeypatch.setattr(core.shutil, "which", lambda _: None)
+    monkeypatch.delenv("FERRY_RCLONE", raising=False)
+    monkeypatch.setattr(core, "_LOCAL_BIN", core.Path("/nonexistent"))
     with pytest.raises(ferry.RcloneNotFound):
         ferry.push("d/", "gcs:b/")
+
+
+# --- cloud-URL endpoints (gs:// / s3://) ------------------------------------
+
+
+def test_gs_url_normalized_to_env_auth_backend(captured):
+    ferry.pull("gs://bkt/weights/", "w/", progress=False)
+    assert captured[0][1:4] == ["copy", ":gcs,env_auth=true,bucket_policy_only=true:bkt/weights/", "w/"]
+
+
+def test_s3_url_normalized_to_env_auth_backend(captured):
+    ferry.push("d/", "s3://bkt/exp/", progress=False)
+    assert captured[0][3] == ":s3,env_auth=true:bkt/exp/"
+
+
+def test_rclone_endpoint_and_local_pass_through(captured):
+    ferry.push("d/", "gcs:bkt/exp/", progress=False)
+    assert captured[0][2:4] == ["d/", "gcs:bkt/exp/"]
+
+
+def test_is_remote_accepts_urls_and_connection_strings():
+    assert core._is_remote("gs://bkt/x")
+    assert core._is_remote("s3://bkt/x")
+    assert core._is_remote(":gcs,env_auth=true,bucket_policy_only=true:bkt/x")
+
+
+def test_remote_accepts_gs_url_base(captured):
+    exp = ferry.Remote("gs://bkt/experiments/foo")
+    exp.push("results/", progress=False)
+    assert captured[0][3] == ":gcs,env_auth=true,bucket_policy_only=true:bkt/experiments/foo/results"
+
+
+def test_ls_uses_lsf_and_splits_lines(monkeypatch):
+    def fake_run(cmd, text=True, capture_output=False):
+        import subprocess as sp
+        return sp.CompletedProcess(cmd, 0, stdout="a/\nb.txt\n", stderr="")
+
+    monkeypatch.setattr(core.shutil, "which", lambda _: "/usr/bin/rclone")
+    monkeypatch.setattr(core.subprocess, "run", fake_run)
+    assert ferry.ls("gs://bkt/x/") == ["a/", "b.txt"]
+
+
+def test_size_parses_json(monkeypatch):
+    def fake_run(cmd, text=True, capture_output=False):
+        import subprocess as sp
+        assert cmd[1:3] == ["size", "--json"]
+        return sp.CompletedProcess(cmd, 0, stdout='{"count": 3, "bytes": 42}', stderr="")
+
+    monkeypatch.setattr(core.shutil, "which", lambda _: "/usr/bin/rclone")
+    monkeypatch.setattr(core.subprocess, "run", fake_run)
+    assert ferry.size("gs://bkt/x/") == {"count": 3, "bytes": 42}
+
+
+@pytest.mark.integration
+def test_gs_url_lists_real_bucket():
+    """Zero-config gs:// access against the team bucket (needs ADC on this box)."""
+    entries = ferry.ls("gs://alignment-team-general-storage/daniel/jarvis/experiments/")
+    assert len(entries) > 0
