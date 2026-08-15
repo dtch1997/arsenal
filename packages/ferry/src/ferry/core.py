@@ -6,24 +6,40 @@ backends. ferry only adds an ergonomic, convention-aware Python surface:
 
     import ferry
 
-    # explicit endpoints (rclone path syntax: "remote:bucket/prefix")
-    ferry.push("results/", "gcs:my-bucket/exp/results/")   # local -> remote
-    ferry.pull("gcs:my-bucket/exp/results/", "results/")   # remote -> local
+    # cloud URLs — zero config, auth comes from the environment
+    ferry.pull("gs://my-bucket/weights/", "/workspace/weights/")
+    ferry.push("results/", "s3://my-bucket/exp/results/")
+
+    # or explicit rclone endpoints ("remote:bucket/prefix" from `rclone config`)
+    ferry.push("results/", "gcs:my-bucket/exp/results/")
 
     # bound remote — the remote base is implicit, structure preserved
-    exp = ferry.Remote("gcs:my-bucket/experiments/foo")
-    exp.push("results/")   # ./results/ -> gcs:my-bucket/experiments/foo/results/
-    exp.pull("results/")   # gcs:my-bucket/experiments/foo/results/ -> ./results/
+    exp = ferry.Remote("gs://my-bucket/experiments/foo")
+    exp.push("results/")   # ./results/ -> gs://my-bucket/experiments/foo/results/
+    exp.pull("results/")   # gs://my-bucket/experiments/foo/results/ -> ./results/
 
-Endpoints are plain strings in rclone syntax. A *local* path has no ``remote:``
-prefix; a *remote* path looks like ``remote:bucket/key`` where ``remote`` is a
-name from ``rclone listremotes`` / ``rclone config``.
+Endpoints are plain strings. Three forms are understood:
+
+- a *local* path: no ``remote:`` prefix (``results/``);
+- a *cloud URL*: ``gs://bucket/key`` or ``s3://bucket/key`` — translated to an
+  on-the-fly rclone backend that authenticates from the environment
+  (Application Default Credentials / ``GOOGLE_APPLICATION_CREDENTIALS`` for
+  GCS; ``AWS_ACCESS_KEY_ID``/``AWS_SECRET_ACCESS_KEY``/``AWS_REGION`` for S3),
+  so no ``rclone config`` step is ever needed;
+- an *rclone endpoint*: ``remote:bucket/key`` where ``remote`` is a name from
+  ``rclone listremotes`` / ``rclone config``.
 """
 
 from __future__ import annotations
 
+import io
+import json
+import os
+import platform
 import shutil
 import subprocess
+import urllib.request
+import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Sequence
@@ -37,23 +53,98 @@ class RcloneError(subprocess.CalledProcessError):
     """Raised when an rclone invocation exits non-zero."""
 
 
+# Cloud-URL schemes -> on-the-fly rclone backends. ``env_auth=true`` makes
+# rclone pick up credentials from the environment (ADC / AWS env vars), which
+# is what a fresh pod or CI box actually has — no `rclone config` required.
+# ``bucket_policy_only=true``: uniform-bucket-level-access buckets reject the
+# legacy object ACL rclone otherwise sends (googleapi 400); with it rclone
+# skips ACLs and objects inherit bucket policy, which is also fine for
+# fine-grained-ACL buckets.
+_URL_SCHEMES = {
+    "gs": ":gcs,env_auth=true,bucket_policy_only=true:",
+    "s3": ":s3,env_auth=true:",
+}
+
+_LOCAL_BIN = Path.home() / ".local" / "bin"
+
+
+def _normalize_endpoint(endpoint: str) -> str:
+    """Translate ``gs://`` / ``s3://`` URLs to on-the-fly rclone backends.
+
+    Local paths and ``remote:path`` endpoints pass through untouched.
+    """
+    for scheme, backend in _URL_SCHEMES.items():
+        prefix = scheme + "://"
+        if endpoint.startswith(prefix):
+            return backend + endpoint[len(prefix):]
+    return endpoint
+
+
 def _rclone_bin() -> str:
+    override = os.environ.get("FERRY_RCLONE")
+    if override:
+        return override
     binary = shutil.which("rclone")
-    if binary is None:
+    if binary is not None:
+        return binary
+    fallback = _LOCAL_BIN / "rclone"
+    if fallback.is_file() and os.access(fallback, os.X_OK):
+        return str(fallback)
+    raise RcloneNotFound(
+        "rclone is not installed or not on PATH. Run `ferry install-rclone` "
+        "(Python: ferry.ensure_rclone()) to fetch the static binary into "
+        "~/.local/bin — no sudo needed — or install it yourself: "
+        "https://rclone.org/install/"
+    )
+
+
+def ensure_rclone(dest_dir: str | Path | None = None) -> str:
+    """Return a path to an rclone binary, downloading one if none is found.
+
+    Checks ``$FERRY_RCLONE``, PATH, and ``~/.local/bin`` first; otherwise
+    downloads the current static build from downloads.rclone.org into
+    ``dest_dir`` (default ``~/.local/bin``, no sudo needed). Idempotent —
+    safe to call at the top of any script that may run on a fresh pod.
+    """
+    try:
+        return _rclone_bin()
+    except RcloneNotFound:
+        pass
+
+    osname = {"linux": "linux", "darwin": "osx"}.get(platform.system().lower())
+    arch = {
+        "x86_64": "amd64", "amd64": "amd64",
+        "aarch64": "arm64", "arm64": "arm64",
+    }.get(platform.machine().lower())
+    if osname is None or arch is None:
         raise RcloneNotFound(
-            "rclone is not installed or not on PATH. ferry is a thin wrapper "
-            "around rclone — install it (https://rclone.org/install/) and "
-            "configure a remote with `rclone config`."
+            f"no static rclone build for {platform.system()}/{platform.machine()}; "
+            "install manually: https://rclone.org/install/"
         )
-    return binary
+
+    url = f"https://downloads.rclone.org/rclone-current-{osname}-{arch}.zip"
+    with urllib.request.urlopen(url) as resp:
+        payload = resp.read()
+
+    dest_dir = Path(dest_dir) if dest_dir is not None else _LOCAL_BIN
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / "rclone"
+    with zipfile.ZipFile(io.BytesIO(payload)) as zf:
+        member = next(n for n in zf.namelist() if n.endswith("/rclone"))
+        dest.write_bytes(zf.read(member))
+    dest.chmod(0o755)
+    return str(dest)
 
 
 def _is_remote(endpoint: str) -> bool:
-    """True if ``endpoint`` is an rclone remote ("remote:path"), not a local path.
+    """True if ``endpoint`` is remote (cloud URL, ``remote:path``, or an
+    on-the-fly ``:backend:path``), not a local path.
 
     Windows drive letters ("C:\\foo") are treated as local: a remote uses a
     multi-char name, a drive is a single letter.
     """
+    if endpoint.startswith(":"):
+        return True  # on-the-fly backend, ":gcs,env_auth=true:bucket"
     head, sep, _ = endpoint.partition(":")
     if not sep:
         return False
@@ -122,7 +213,7 @@ def _transfer(
     **kw,
 ) -> RcloneResult:
     verb = "sync" if mirror else "copy"
-    args: list[str] = [verb, src, dst]
+    args: list[str] = [verb, _normalize_endpoint(src), _normalize_endpoint(dst)]
     for pattern in includes:
         args += ["--include", pattern]
     for pattern in excludes:
@@ -200,6 +291,27 @@ def pull(
     )
 
 
+def ls(endpoint: str, **kw) -> list[str]:
+    """Entries directly under ``endpoint`` (``rclone lsf``), dirs suffixed "/"."""
+    out = _run(
+        ["lsf", _normalize_endpoint(endpoint)], progress=False, capture=True, **kw
+    ).stdout
+    return [line for line in out.splitlines() if line.strip()]
+
+
+def size(endpoint: str, **kw) -> dict:
+    """Object count and total bytes under ``endpoint``.
+
+    Returns ``rclone size --json`` output, e.g. ``{"count": 12, "bytes": 123}``.
+    Useful as a preflight before committing to a multi-hundred-GB pull.
+    """
+    out = _run(
+        ["size", "--json", _normalize_endpoint(endpoint)],
+        progress=False, capture=True, **kw,
+    ).stdout
+    return json.loads(out)
+
+
 def _join_remote(base: str, sub: str) -> str:
     if not sub or sub in (".", "./"):
         return base
@@ -211,11 +323,13 @@ class Remote:
     """A bound remote base. ``push``/``pull`` take a relative path and map it
     under ``base`` on the remote, preserving directory structure.
 
-        exp = Remote("gcs:my-bucket/experiments/foo")
-        exp.push("results/")   # ./results/ -> gcs:my-bucket/experiments/foo/results/
+        exp = Remote("gs://my-bucket/experiments/foo")
+        exp.push("results/")   # ./results/ -> gs://my-bucket/experiments/foo/results/
 
-    ``defaults`` are keyword args applied to every transfer (e.g.
-    ``excludes=["*.tmp"]``); per-call kwargs override them.
+    ``base`` may be a cloud URL (``gs://…``, ``s3://…``) or a configured
+    rclone endpoint (``gcs:…``). ``defaults`` are keyword args applied to
+    every transfer (e.g. ``excludes=["*.tmp"]``); per-call kwargs override
+    them.
     """
 
     base: str
@@ -224,8 +338,9 @@ class Remote:
     def __post_init__(self) -> None:
         if not _is_remote(self.base):
             raise ValueError(
-                f"Remote base {self.base!r} is not an rclone remote "
-                '(expected "remote:bucket/prefix").'
+                f"Remote base {self.base!r} is not a remote endpoint "
+                '(expected "gs://bucket/prefix", "s3://bucket/prefix", or '
+                'an rclone "remote:bucket/prefix").'
             )
 
     def _merge(self, kw: dict) -> dict:
@@ -249,10 +364,15 @@ class Remote:
         src = _join_remote(self.base, sub) if sub not in ("", ".") else self.base
         return pull(src, local, **self._merge(kw))
 
-    def ls(self, sub: str = "", **kw) -> str:
-        """Return ``rclone lsf`` listing of ``base/sub`` (one name per line)."""
+    def ls(self, sub: str = "", **kw) -> list[str]:
+        """Entries under ``base/sub`` (``rclone lsf``), dirs suffixed "/"."""
         target = _join_remote(self.base, sub) if sub else self.base
-        return _run(["lsf", target], progress=False, capture=True, **kw).stdout
+        return ls(target, **kw)
+
+    def size(self, sub: str = "", **kw) -> dict:
+        """Object count and total bytes under ``base/sub`` (see :func:`size`)."""
+        target = _join_remote(self.base, sub) if sub else self.base
+        return size(target, **kw)
 
 
 def listremotes() -> list[str]:

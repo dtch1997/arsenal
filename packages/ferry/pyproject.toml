@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ferry-sync"
-version = "0.2.0"
+version = "0.3.0"
 description = "Pythonic push/pull between local and any rclone remote, plus a content-addressed GCS file store (ferry.cas)."
 readme = "README.md"
 requires-python = ">=3.9"

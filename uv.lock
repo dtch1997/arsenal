@@ -663,7 +663,7 @@ requires-dist = [{ name = "lobby", editable = "packages/lobby" }]
 
 [[package]]
 name = "ferry-sync"
-version = "0.2.0"
+version = "0.3.0"
 source = { editable = "packages/ferry" }
 
 [package.optional-dependencies]
