@@ -154,6 +154,16 @@ def test_size_parses_json(monkeypatch):
 
 @pytest.mark.integration
 def test_gs_url_lists_real_bucket():
-    """Zero-config gs:// access against the team bucket (needs ADC on this box)."""
-    entries = ferry.ls("gs://alignment-team-general-storage/daniel/jarvis/experiments/")
+    """Zero-config gs:// access against a real bucket.
+
+    Skipped unless FERRY_TEST_GS_PREFIX names a listable gs:// prefix (and
+    rclone + GCS credentials are available) — same self-gating convention as
+    the cas integration test, so plain `pytest` stays green in CI.
+    """
+    import os
+
+    prefix = os.environ.get("FERRY_TEST_GS_PREFIX")
+    if not prefix:
+        pytest.skip("set FERRY_TEST_GS_PREFIX (a listable gs:// prefix) to run")
+    entries = ferry.ls(prefix)
     assert len(entries) > 0

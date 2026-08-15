@@ -144,6 +144,17 @@ ferry install-rclone
 ferry remotes
 ```
 
+## Stress testing
+
+`scripts/stress.py` is a repeatable three-tier stress suite (bulk throughput,
+kill-9 + resume with byte-level `rclone check`, many-small-files) run against
+gs:// corpora you point it at. Reference numbers from the 2026-08-15 devbox
+pass are in its docstring — headline: ~195 MiB/s sustained, kill-resume left
+0 byte differences across 110 files, and resume is **file-granular** (a
+partial file restarts from zero — fine for sharded weights, slow for one
+giant file). Tiny-file trees are request-rate-bound (~130 objects/s): tar
+them before upload.
+
 ## What ferry deliberately is not
 
 - Not a new transfer engine — that's rclone's job.
