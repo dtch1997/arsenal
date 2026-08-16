@@ -194,6 +194,8 @@ def test_flares_filters_by_sev_and_staleness():
          "host": "h"},
         {"ts": _iso(0), "sev": "page", "msg": "fresh page", "source": "y",
          "host": "h"},
+        {"ts": _iso(0), "sev": "warn", "msg": "desk: some item", "source": "desk",
+         "host": "h"},
     ])
     cfg = Config(flare_stale_days=7)
     items, warnings = collect_flares(cfg, NOW)

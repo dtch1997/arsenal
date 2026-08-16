@@ -172,6 +172,9 @@ def collect_flares(cfg: Config, now: datetime) -> tuple[list[dict], list[str]]:
         except json.JSONDecodeError:
             warnings.append(f"flares: skipped malformed line {i + 1}")
             continue
+        if rec.get("source") == "desk":
+            continue  # desk's own notifications about inbox items — counting
+            # them as items (and re-flaring them) is a feedback loop
         if rec.get("sev") not in ("warn", "page"):
             continue
         ts = _parse_ts(rec.get("ts"))
