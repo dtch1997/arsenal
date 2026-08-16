@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "flare"
+version = "0.1.0"
+description = "Universal push-based distress channel: page Daniel over Slack from any agent process (session, concierge worker, pod, cron). Stdlib only; uvx-able."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Daniel Tan" }]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+flare = "flare.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/flare"]

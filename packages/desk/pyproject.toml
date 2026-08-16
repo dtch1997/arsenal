@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "desk"
+version = "0.1.0"
+description = "The waiting-on-Daniel inbox: aggregate blocked concierge tasks, stale PRs, BLOCKED-ON-DANIEL markers, and recent flares into one page; push new items via flare."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Daniel Tan" }]
+dependencies = [
+    "flare @ git+https://github.com/dtch1997/arsenal#subdirectory=packages/flare",
+    "lobby @ git+https://github.com/dtch1997/arsenal#subdirectory=packages/lobby",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+desk = "desk.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/desk"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.uv.sources]
+flare = { workspace = true }
+lobby = { workspace = true }

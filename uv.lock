@@ -16,7 +16,9 @@ members = [
     "concierge",
     "cowrite",
     "databrowser",
+    "desk",
     "ferry-sync",
+    "flare",
     "foyer",
     "lobby",
     "reportly",
@@ -662,6 +664,28 @@ dependencies = [
 requires-dist = [{ name = "lobby", editable = "packages/lobby" }]
 
 [[package]]
+name = "desk"
+version = "0.1.0"
+source = { editable = "packages/desk" }
+dependencies = [
+    { name = "flare" },
+    { name = "lobby" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "flare", editable = "packages/flare" },
+    { name = "lobby", editable = "packages/lobby" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
+]
+provides-extras = ["dev"]
+
+[[package]]
 name = "ferry-sync"
 version = "0.3.1"
 source = { editable = "packages/ferry" }
@@ -680,6 +704,20 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'" },
 ]
 provides-extras = ["gcs", "dev"]
+
+[[package]]
+name = "flare"
+version = "0.1.0"
+source = { editable = "packages/flare" }
+
+[package.optional-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pytest", marker = "extra == 'dev'", specifier = ">=8" }]
+provides-extras = ["dev"]
 
 [[package]]
 name = "flatbuffers"
