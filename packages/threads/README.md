@@ -1,188 +1,131 @@
 # threads
 
-The **bottom-up activity spine** — plus the deliberate push channel
-(`note`/`pickup`) for parking work you're stepping away from. Jarvis's memory registry (`~/jarvis-memory`)
-is *self-reported* top-down state: a thread's line says whatever the last
-session wrote, and threads that end abruptly go stale silently. `threads` adds
-the missing *observed* layer — it reads every Claude session transcript, distils
-each into a durable summary, weaves those summaries onto the existing registry
-as **threads**, and renders "which threads actually got worked on, which are
-dormant, and what sessions belong to no known thread."
+**Know what you — and your AI agents — actually worked on.**
 
-```
-~/.claude/projects/**/*.jsonl  ──scan──▶  ~/.threads/summaries/*.json
-                                              │
-              ~/jarvis-memory (registry) ──weave──▶  assignments.jsonl + candidates/
-                                              │
-                                          serve / render  ──▶  dashboard
-```
+If you run a lot of Claude Code sessions, activity quickly outruns memory:
+projects go quiet without anyone deciding to stop, promising starts get
+forgotten, and "what happened this month?" has no reliable answer. Any notes
+you keep say whatever was last written, which is not the same thing as what
+was done.
 
-No second registry: a **thread** is a memory-stub slug. `threads` never writes
-into `~/jarvis-memory` — promoting a candidate thread is a human/consolidation
-job, and deletion is Daniel's veto.
+`threads` answers from the ground truth instead. It reads your Claude Code
+session transcripts, distills each session into a short durable summary, and
+groups related sessions into **threads** — one per project — so you can see
+where effort is actually going, what's gone dormant, and what fell through
+the cracks.
 
-Threads are **recursive**: a session is the smallest thread; higher-order
-threads (programs, goals) weave lower ones. v0.2 adds a per-thread **relevance
-score** (the default sort), a **hierarchy** layer (`hierarchy.md` + goal roots +
-auto-drafted programs) with subtree **roll-ups**, and an Obsidian-compatible
-**vault mirror** (`threads vault`).
+## What it lets you accomplish
 
-## Storage — the `~/.threads/` spool
+- **See your real activity at a glance.** A dashboard of every thread,
+  ranked by a tunable relevance score (volume × recency), with 30-day
+  sparklines, last-touched dates, sorting, and filters.
+- **Catch dropped work before it's lost.** Threads that go quiet get a
+  dormancy flag; sessions that match no known project land in an *unfiled
+  inbox* instead of vanishing.
+- **Park work and pick it back up cheaply.** `threads note` saves a context
+  dump (state, next steps, pointers) onto a thread as you step away;
+  `threads pickup` prints everything needed to resume — your parked notes
+  plus what the transcripts show happened since.
+- **See structure you didn't plan.** Clusters of related unfiled sessions
+  become auto-drafted *candidate threads*; related threads roll up into
+  *programs* and *goals* in a hierarchy view with aggregated stats. Keep
+  what's right, delete what isn't — everything auto-drafted is yours to veto.
+- **Browse it as a knowledge base.** Everything mirrors into an
+  [Obsidian](https://obsidian.md)-compatible vault — plain Markdown,
+  frontmatter, `[[wikilinks]]` — so graph view, backlinks, and Dataview
+  queries work out of the box.
+- **Keep a record that outlives the transcripts.** Claude Code eventually
+  ages transcripts out; your summaries persist in `~/.threads/`.
 
-Summaries are *derived but durable*: transcripts age out of `~/.claude`, the
-spool does not.
+Everything is local files. Summaries never leave your machine, and the tool
+never edits your own notes — its outputs are separate, regenerable, and
+disposable.
 
-| path | holds |
-|---|---|
-| `summaries/<session_id>.json` | one summary record per session (title, 3–6 sentence summary, artifacts, status signals, candidate slugs, keywords, deterministic match hints) |
-| `assignments.jsonl` | `{session_id, slug\|null, method, confidence}` per session |
-| `candidates/<name>.md` | agent-drafted candidate threads for unfiled clusters |
-| `notes/<slug>/<stamp>.md` | agent-pushed context-dumps (`threads note`) — frontmatter + markdown body |
-| `state.json` | scan cursor: lookback, per-run stats, and a size manifest |
-| `config.toml` | tunable knobs (relevance weights, dormancy, clustering); written with defaults on first run, never overwritten |
-| `hierarchy.md` | the thread tree — one `## <parent>` section per parent, `[[slug]]` children; agent-drafted, standing until Daniel edits |
-| `vault/` | the regenerable Obsidian-compatible mirror (see below) |
-
-## Commands
+## Quick start
 
 ```bash
-threads scan     # summarize new/grown sessions (incremental; idempotent)
-threads weave    # assign summaries; draft candidates + program sections; refresh the vault
-threads render   # print the dashboard as a markdown digest (stdout); --sort/--filter-* flags
-threads status   # one-line activity + gate summary
-threads serve    # serve the dashboard through the lobby hub, re-rendering every 60s
-threads vault    # regenerate the Obsidian-compatible vault mirror under ~/.threads/vault
-threads note     # push a durable context-dump onto a thread (the park move)
-threads pickup   # print a thread's context-pack (notes + recent sessions)
+pip install -e .        # or, in the arsenal workspace: uv sync --all-packages
+
+threads scan            # summarize your recent sessions (see cost note below)
+threads weave           # group summaries into threads
+threads serve           # open the dashboard (local URL is printed)
 ```
 
-`render` (and the served table) take `--sort {relevance,last-activity,sessions,name}`
-(default `relevance`) and filters `--filter-active-days N`, `--filter-dormant`,
-`--filter-search TEXT` (over slug + latest title). The served dashboard exposes
-the same as sticky query params (`?sort=…&active_days=…&dormant=1&q=…`) so a
-sort/filter selection survives the auto-refresh.
+`scan` uses one small-model call (Claude Haiku) per substantial session —
+typically well under a cent each; a 30-day backlog of ~300 sessions costs a
+few dollars, and it's capped per run (`--max-calls`, default 100; `--all`
+lifts the cap for a backfill). It is incremental and idempotent: re-running
+it summarizes only new or grown sessions and costs nothing when there's
+nothing new. Trivial sessions (under 10 messages or 5 minutes) are recorded
+without a model call. Needs `ANTHROPIC_API_KEY` (or a logged-in `claude`
+CLI) for the summarization calls only — `weave`, `serve`, `note`, and
+`pickup` make no model calls, except one optional clustering call per
+`weave` to draft candidate threads.
 
-### `threads note` / `threads pickup` — the push channel
+## How your work gets organized
 
-Everything above is *observed*: scan reads transcripts after the fact, and a
-session you walked away from just looks "abandoned-midstream" to the
-summarizer. `note` is the *deliberate* counterpart — mid-session, an agent (or
-Daniel) parks a context-dump onto a thread before moving on:
+- **Session → summary.** Each session becomes one record: a title, a 3–6
+  sentence summary of what was attempted and how it ended, artifacts touched
+  (branches, PRs, files), and status signals (wrapped-up / blocked /
+  abandoned-midstream / ongoing).
+- **Summary → thread.** Sessions are matched to threads using deterministic
+  signals first — repos touched, git branches, worker-pool metadata — with a
+  model-suggested fallback. Unmatched sessions go to the unfiled inbox;
+  clusters of them become auto-drafted candidate threads.
+- **Your project notes name the threads (optional but recommended).** Point
+  `THREADS_MEMORY_DIR` at a folder of Markdown notes, one per project — each
+  filename becomes a thread name, and matching keys against note contents.
+  An optional `MEMORY.md` index supplies one status line per project;
+  threads whose line reads closed/retired/complete are never flagged
+  dormant. Without such a folder, threads bootstrap entirely from candidate
+  drafts.
+- **Threads → programs → goals.** A simple tree in
+  `~/.threads/hierarchy.md` (editable Markdown) groups threads under
+  mid-level programs; if you keep a goals folder (`THREADS_GOALS_DIR`),
+  goal files that mention thread names become top-level roots
+  automatically. Every level rolls up its subtree's activity.
+
+## The dashboard
+
+`threads serve` hosts it locally (or through the
+[lobby](../lobby) hub when available), re-rendering every 60 s. You get: the
+sortable/filterable thread table (`?sort=relevance|last-activity|sessions|name`,
+active-in-N-days / dormant-only / text search — selections stick across
+refresh); a collapsible hierarchy tree with roll-ups; a coverage panel
+(goals with no active thread, threads under no goal); per-thread drill-down
+with artifact links; the unfiled inbox; and candidate threads.
+`threads render` prints the same as a Markdown digest; `threads status` is
+a one-liner for scripts and shell prompts.
+
+## Parking and resuming work
 
 ```bash
-threads note logit-interpolation "parked: PR the branch, GPU re-run needs Sid" --status parked
-threads note logit-interpolation - --status parked <<'EOF'   # longer markdown dump via stdin
+# stepping away mid-stream — dump your working context onto the thread:
+threads note my-project - --status parked <<'EOF'
 ## Where this stands
-...
+Benchmark runs green; PR not opened yet.
 ## Next steps
-...
+Open the PR; re-run with seed sweep.
 EOF
-threads pickup logit-interpolation   # read this at the top of the resuming session
+
+# later, at the top of a fresh session:
+threads pickup my-project
 ```
 
-Notes are markdown files with frontmatter under `notes/<slug>/`; cwd, git
-branch, and `CLAUDE_SESSION_ID` (when the harness exports it) are captured
-automatically. The slug **need not exist in the registry** — a note onto a new
-kebab-case name seeds a candidate thread (shown with a `new` pill; promotion
-to a real memory stub stays a human/consolidation job). Notes count as thread
-activity (a freshly-parked thread isn't "dormant"), render in the dashboard
-drill-down and digest, and `pickup` emits registry line → notes (newest first,
-full bodies) → recent observed session summaries, ready to paste into a fresh
-session. No model calls in either command.
-
-### `threads scan`
-
-Incremental sweep of `~/.claude/projects/**/*.jsonl` (default lookback 30 days,
-`--days`). Keyed on `(session_id, transcript_size)`: an unchanged transcript is
-skipped with **zero** model calls; a grown one is re-summarized. Trivial
-sessions (< 10 messages or < 5 min span) get a stub record from the first user
-message — no model call. Everything else gets **one** headless
-`claude -p` call (`claude-haiku-4-5-20251001`, JSON-schema-shaped output) over a
-downsampled transcript view (user turns + assistant text + tool *names*; tool
-I/O elided; capped at ~50k chars head+tail). Malformed transcript lines are
-skipped and tallied, never fatal.
-
-Cost guardrails: a per-run cap (`--max-calls`, default 100; `--all` lifts it for
-backfill). Hitting the cap prints a warning and fires `flare --sev warn
---source threads`. Per-run call count + estimated spend land in `state.json`.
-
-### `threads weave`
-
-Deterministic passes first (from the hints stored at scan time — no model, no
-transcript re-read), in priority order:
-
-1. **concierge** — a `concierge-home/workspaces/<tid>` cwd → the task JSON →
-   its repo/title/spec mapped to a slug, else the `unmatched-concierge` review
-   bucket.
-2. **stub / goals / branch** — a memory-stub or `goals/<slug>.md` edited, or a
-   git branch, mapped to a slug.
-3. **repo** — the dominant touched/referenced repo (transcript file paths, cwd,
-   and `owner/repo` references) mapped to a slug via exact match, stub mention,
-   then normalized substring.
-4. **model-validated fallback** — the summarizer's `candidate_slugs`, accepted
-   only if the slug exists in the registry.
-
-Unmatched → the unfiled inbox. Then **one** clustering call over the unfiled
-summaries drafts candidate threads (≥ 2 members each; singletons stay in the
-inbox) into `candidates/`. Prints an overall + per-method match report.
-
-### The dashboard (`serve` / `render`)
-
-`threads serve` registers with the lobby hub the way databrowser/desk do →
-`https://<hub>…/a/threads/`, falling back to a plain localhost server (with a
-notice) if lobby is down; it re-renders on an interval (60 s default). Views:
-
-1. **Thread table** — one row per slug with ≥ 1 assigned session: **relevance**,
-   last activity, session count, a 30-day activity sparkline, latest title, and
-   a **dormancy flag** (default 14 days, suppressed when the MEMORY.md line
-   already reads closed/retired/complete). Sortable/filterable (above).
-2. **Tree view** — the hierarchy (goal / program → thread → sessions) with
-   subtree **roll-ups** (aggregated session count, last-activity, relevance).
-   Orphan threads group under an `(unparented)` root.
-3. **Coverage** — the goals ↔ threads view: goals with no active descendant
-   thread, and threads under no goal (feeds `/goal-review`).
-4. **Thread drill-down** — that thread's summaries newest-first with artifact
-   links (PR/branch/URL).
-5. **Unfiled inbox** — unmatched sessions, newest first.
-6. **Candidate threads** — the drafted clusters.
-
-`threads render` emits the same content as a markdown digest to stdout.
-
-### Relevance, hierarchy, and roll-ups
-
-Each thread scores
-`relevance = w_sessions·log1p(sessions_in_window) + w_recency·exp(-days_since_last / tau)`
-(defaults `w_sessions=1.0, w_recency=2.0, tau=7.0`, 30-day window) — all in the
-`[relevance]` block of `config.toml`. The formula is deliberately isolated in
-one pure function (`threads.relevance.relevance`) so it can be refined without
-touching anything else.
-
-The hierarchy is a tree (at most one parent per thread; cycles rejected at
-load). Parents come from two places: **goals** are derived for free by scanning
-`jarvis/goals/*.md` for mentions of registry slugs (read-only), and
-**programs** are mid-level groupings — `weave` auto-drafts a `## program-…`
-section when ≥ 3 sibling threads share a repo/keyword and have no common parent.
-Edit or delete a section in `hierarchy.md` to override; the tool never rewrites
-an existing section. Every node rolls up its subtree's stats and recomputes
-relevance from the aggregate.
+Notes capture cwd, git branch, and session id automatically, count as
+thread activity (a freshly parked thread isn't "dormant"), and can target a
+brand-new name to start a thread that has no note file yet. `pickup` prints
+the project's status line, all parked notes (newest first), and recent
+observed session summaries — a ready-made context pack for you or an agent.
 
 ## Open in Obsidian
 
-`threads vault` (also run at the end of every `weave`) mirrors the rendered
-layer into `~/.threads/vault/` as plain Markdown with YAML frontmatter and
-`[[wikilinks]]` — the JSON spool stays machine truth; the vault is a
-regenerable *view* (idempotent; notes whose source vanished are pruned).
-
-To browse it in [Obsidian](https://obsidian.md): **Open folder as vault** →
-`~/.threads/vault` (or add it to an existing vault). Graph view and backlinks
-then work out of the box — `threads/<slug>` link to their `[[parent]]` and their
-`[[session-…]]` notes; `programs/` and `goals/` link to their children; start
-from `INDEX.md`. Because filenames are registry slugs, mounting the vault
-alongside `~/jarvis-memory` cross-links the two for free (the tool never writes
-into `jarvis-memory`).
-
-[Dataview](https://blacksmithgu.github.io/obsidian-dataview/) users can query
-the frontmatter, e.g. threads by relevance:
+The vault at `~/.threads/vault/` (refreshed by every `weave`, or on demand
+with `threads vault`) mirrors threads, sessions, programs, goals, and
+candidates as linked Markdown notes, starting at `INDEX.md`. Open the
+folder as a vault (or add it to an existing one): graph view and backlinks
+just work, and [Dataview](https://blacksmithgu.github.io/obsidian-dataview/)
+can query the frontmatter:
 
 ````markdown
 ```dataview
@@ -192,45 +135,52 @@ SORT relevance DESC
 ```
 ````
 
-## `--check` gate hooks (cheap, offline, no model calls)
+The vault is a regenerable mirror — safe to delete, never the source of
+truth, and pruned of notes whose underlying records vanish.
 
-- `threads scan --check` — exit 0 iff the spool covers the configured lookback,
-  every non-trivial transcript in the window has a model summary, and an
-  incremental re-scan right now would be a no-op. Prints what it checked.
-- `threads weave --check` — exit 0 iff assignments cover every summarized
-  session, the deterministic-match rate over non-trivial, non-concierge
-  sessions is **≥ 70 %**, and concierge-workspace sessions are 100 % resolved
-  (to a slug or the review bucket). Prints the actual rates.
+## Tuning
 
-## Install
+`~/.threads/config.toml` (written with commented defaults on first run)
+holds the knobs: the relevance formula's weights
+(`relevance = w_sessions·log1p(sessions_in_window) + w_recency·exp(-days_since_last/tau)`;
+defaults `1.0` / `2.0` / `tau=7`, 30-day window), the dormancy threshold
+(14 days), scan lookback, and clustering minimums. Adjust freely; nothing
+else needs to change.
 
-```bash
-pip install -e .          # from this directory (uv workspace: uv sync --all-packages)
-```
+## Automation
 
-## Recommended cron (not installed for you)
-
-`threads` installs **no** crontab. Add this yourself (`crontab -e`) once happy:
+`threads` installs no crontab. A daily refresh is one line
+(`crontab -e`):
 
 ```cron
-# daily 07:00: refresh summaries, re-weave onto the registry (weave also
-# refreshes ~/.threads/vault)
 0 7 * * * cd $HOME && threads scan && threads weave >> $HOME/.threads/cron.log 2>&1
 ```
 
-Keep `threads serve` alive across logout with tmux:
+Keep the dashboard alive across logout with
+`tmux new-session -d -s threads-dashboard "threads serve"`.
 
-```bash
-tmux new-session -d -s threads-dashboard "threads serve"
-```
+For scripting and CI-style gating, `threads scan --check` and
+`threads weave --check` are cheap, offline (zero model calls) health
+checks: they exit non-zero unless summaries are complete for the lookback
+window and match quality is above threshold, and print what they verified.
 
-## Env overrides (mostly for tests / smoke runs)
+## Environment overrides
 
-- `THREADS_HOME` — base dir instead of `~` (`~/.threads` resolves under it).
-- `THREADS_PROJECTS_DIR` — the `~/.claude/projects` transcript tree.
-- `THREADS_MEMORY_DIR` — the `~/jarvis-memory` registry.
-- `THREADS_CONCIERGE_HOME` — the `~/concierge-home` root.
-- `THREADS_GOALS_DIR` — the read-only `~/jarvis/goals` tree (hierarchy roots).
+| variable | points at | default |
+|---|---|---|
+| `THREADS_HOME` | base dir (`.threads` lives under it) | `~` |
+| `THREADS_PROJECTS_DIR` | Claude Code transcript tree | `~/.claude/projects` |
+| `THREADS_MEMORY_DIR` | your project-notes folder | `~/jarvis-memory` |
+| `THREADS_GOALS_DIR` | your goals folder (optional) | `~/jarvis/goals` |
+| `THREADS_CONCIERGE_HOME` | concierge worker pool (optional) | `~/concierge-home` |
 
-Real transcript content is sensitive: summaries stay in `~/.threads` and are
-never committed or logged.
+Every integration degrades gracefully: with no notes folder, no goals
+folder, no worker pool, and no lobby hub, you still get scan → weave →
+a local dashboard.
+
+## Privacy
+
+Transcripts can contain sensitive material. Summaries and notes stay under
+`~/.threads/` on your machine; nothing is uploaded anywhere except the
+transcript excerpts sent to the Claude API for summarization, and the tool
+never writes into your notes or transcripts.
