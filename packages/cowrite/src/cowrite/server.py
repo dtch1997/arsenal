@@ -22,6 +22,7 @@ import hashlib
 import json
 import mimetypes
 import os
+import re
 import subprocess
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -36,9 +37,22 @@ def content_rev(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
-def git_head_text(draft: Path) -> tuple[str | None, str | None]:
-    """Return (committed_text, None) for the draft's content at git HEAD, or
-    (None, reason) if it can't be obtained (not a repo, file untracked, etc.)."""
+# A git revision as it may arrive from the client. `git show <sha>:<path>`
+# runs via subprocess, so the sha reaches git as an argument — accept only
+# hex object names (and the literal HEAD) so request input can never inject
+# git flags or a `:`/path of its own.
+_SHA_RE = re.compile(r"[0-9a-fA-F]{4,64}")
+
+
+def _valid_sha(sha: str) -> bool:
+    return bool(_SHA_RE.fullmatch(sha))
+
+
+def _git_locate(draft: Path) -> tuple[str | None, str | None, str | None]:
+    """Resolve the draft to (repo_toplevel, rel_posix, None), or (None, None,
+    reason) if it isn't inside a git work tree. The reason strings are the same
+    ones the revert path has always surfaced, so every git-backed feature
+    degrades with one friendly voice."""
     draft = draft.resolve()
     try:
         top = subprocess.run(
@@ -46,21 +60,66 @@ def git_head_text(draft: Path) -> tuple[str | None, str | None]:
             capture_output=True, text=True,
         )
     except FileNotFoundError:
-        return None, "git is not installed"
+        return None, None, "git is not installed"
     if top.returncode != 0:
-        return None, "not inside a git repository"
+        return None, None, "not inside a git repository"
     toplevel = Path(top.stdout.strip())
     try:
         rel = draft.relative_to(toplevel)
     except ValueError:
-        return None, "draft is outside the git work tree"
+        return None, None, "draft is outside the git work tree"
+    return str(toplevel), rel.as_posix(), None
+
+
+def git_version_text(draft: Path, sha: str = "HEAD") -> tuple[str | None, str | None]:
+    """Return (committed_text, None) for the draft's content at a git revision
+    (`git show <sha>:<rel>`), or (None, reason) if it can't be obtained (not a
+    repo, file untracked at that revision, etc.). `sha` must be a hex object
+    name or the literal 'HEAD'."""
+    if sha != "HEAD" and not _valid_sha(sha):
+        return None, "invalid revision"
+    toplevel, rel, reason = _git_locate(draft)
+    if reason is not None:
+        return None, reason
     show = subprocess.run(
-        ["git", "-C", str(toplevel), "show", f"HEAD:{rel.as_posix()}"],
+        ["git", "-C", toplevel, "show", f"{sha}:{rel}"],
         capture_output=True, text=True,
     )
     if show.returncode != 0:
-        return None, "draft is not committed at HEAD"
+        if sha == "HEAD":
+            return None, "draft is not committed at HEAD"
+        return None, f"version {sha[:8]} of this draft is unavailable"
     return show.stdout, None
+
+
+def git_head_text(draft: Path) -> tuple[str | None, str | None]:
+    """The draft's content at git HEAD — the degenerate `git_version_text`."""
+    return git_version_text(draft, "HEAD")
+
+
+def git_log(draft: Path, limit: int = 50) -> tuple[list[dict] | None, str | None]:
+    """Return (commits, None) — the commits touching the draft, newest first,
+    capped at `limit` — or (None, reason) if the draft isn't in a git work tree.
+    An in-repo-but-never-committed draft yields an empty list (no reason)."""
+    toplevel, rel, reason = _git_locate(draft)
+    if reason is not None:
+        return None, reason
+    # %x1f is the ASCII unit separator — a field delimiter that can't appear in
+    # a commit subject, so the split below is unambiguous.
+    log = subprocess.run(
+        ["git", "-C", toplevel, "log", f"-n{limit}",
+         "--format=%H%x1f%cI%x1f%s", "--", rel],
+        capture_output=True, text=True,
+    )
+    if log.returncode != 0:
+        return None, "could not read git history for this draft"
+    commits = []
+    for line in log.stdout.splitlines():
+        if not line:
+            continue
+        sha, date, subject = line.split("\x1f", 2)
+        commits.append({"sha": sha, "date": date, "subject": subject})
+    return commits, None
 
 
 def make_handler(draft: Path, title: str):
@@ -114,6 +173,25 @@ def make_handler(draft: Path, title: str):
                 md = read_draft()
                 self._send_json(200, {"md": md, "html": render_fragment(md),
                                       "rev": content_rev(md), **analyze_comments(md)})
+                return
+            if path == "/api/history":
+                commits, err = git_log(draft)
+                if err is not None:
+                    self._send_json(409, {"ok": False, "error": err})
+                    return
+                self._send_json(200, {"ok": True, "commits": commits})
+                return
+            if path == "/api/version":
+                sha = (parse_qs(urlparse(self.path).query).get("sha") or [""])[0]
+                if not _valid_sha(sha):
+                    self._send_json(400, {"ok": False, "error": "invalid sha"})
+                    return
+                md, err = git_version_text(draft, sha)
+                if err is not None:
+                    self._send_json(409, {"ok": False, "error": err})
+                    return
+                self._send_json(200, {"ok": True, "sha": sha, "md": md,
+                                      "html": render_fragment(md)})
                 return
             asset = safe_asset(self.path)
             if asset is None:

@@ -61,6 +61,17 @@ for confirmation (warning if you have unsaved changes), writes the committed
 text back to disk atomically, and re-renders. It's a no-op error if the draft
 isn't tracked in a git repo.
 
+A **History** button opens a Google-Docs-style version-history drawer, backed by
+the draft's own git log. It lists the commits that touched the draft (newest
+first, capped at 50); click one to see that version rendered read-only in the
+preview (a banner marks it as historical). **Restore this version** writes it
+back through the normal save path — so it goes through the same atomic write and
+`X-Base-Rev` conflict check as any edit: if your co-writer changed the file
+meanwhile, you're asked which version wins, exactly like a save. Revert to last
+commit is just the degenerate case of this (restore `HEAD`). If the draft isn't
+in a git repo / isn't tracked, the drawer shows the same friendly reason the
+revert path gives.
+
 ## Install
 
 ```bash
@@ -98,7 +109,12 @@ port + URL, so several drafts can be open at once.
   `POST /revert` reads the committed version via `git show HEAD:<path>` and
   writes it back the same atomic way. `POST /api/render` renders a markdown
   body to an HTML fragment for the typing-time preview — it renders only, never
-  touches disk, so it stays off the single write path.
+  touches disk, so it stays off the single write path. `GET /api/history` lists
+  the commits touching the draft (`git log -- <path>`) and
+  `GET /api/version?sha=…` returns a given revision's Markdown + rendered HTML
+  (`git show <sha>:<path>`); the `sha` is validated hex-only before it ever
+  reaches git, so request input can't inject git flags. Restore reuses `/save`,
+  so there's no second write path.
 - **Figures / assets** referenced relatively (`![](fig.png)`, `![](plots/x.png)`)
   are served from the draft's own directory, so the preview shows them exactly
   as they'll appear. Path traversal outside that directory is blocked.

@@ -1,6 +1,8 @@
 """End-to-end tests for the editor server's save/sync round-trip."""
 
 import json
+import shutil
+import subprocess
 import threading
 import urllib.request
 import urllib.error
@@ -9,7 +11,7 @@ import pytest
 from http.server import ThreadingHTTPServer
 
 from cowrite.render import render_fragment
-from cowrite.server import content_rev, make_handler
+from cowrite.server import content_rev, git_log, git_version_text, make_handler
 
 
 @pytest.fixture()
@@ -146,3 +148,98 @@ def test_api_doc_carries_comments(editor):
     data = json.loads(body)
     assert data["comments"][0]["author"] == "bob"
     assert data["comments"][0]["text"] == "q"
+
+
+# --------------------------------------------------------------------------- #
+# version history (git-backed)
+# --------------------------------------------------------------------------- #
+needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+
+
+def _git(cwd, *args):
+    subprocess.run(["git", *args], cwd=cwd, check=True,
+                   capture_output=True, text=True)
+
+
+@pytest.fixture()
+def git_editor(tmp_path):
+    """A draft with two commits in its own git repo; yields (url, draft, shas)
+    where shas is [older, newer]."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "t@t")
+    _git(repo, "config", "user.name", "t")
+    draft = repo / "draft.md"
+    draft.write_text("# v1\n\nfirst version\n", encoding="utf-8")
+    _git(repo, "add", "draft.md")
+    _git(repo, "commit", "-q", "-m", "first commit")
+    draft.write_text("# v2\n\nsecond version\n", encoding="utf-8")
+    _git(repo, "commit", "-q", "-am", "second commit")
+    log = subprocess.run(["git", "log", "--format=%H", "--", "draft.md"],
+                         cwd=repo, capture_output=True, text=True)
+    newer, older = log.stdout.split()
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(draft, "test"))
+    t = threading.Thread(target=httpd.serve_forever, daemon=True)
+    t.start()
+    yield f"http://127.0.0.1:{httpd.server_address[1]}", draft, [older, newer]
+    httpd.shutdown()
+
+
+@needs_git
+def test_history_lists_commits_newest_first(git_editor):
+    url, draft, (older, newer) = git_editor
+    status, body = req(url + "/api/history")
+    data = json.loads(body)
+    assert (status, data["ok"]) == (200, True)
+    shas = [c["sha"] for c in data["commits"]]
+    assert shas == [newer, older]
+    assert data["commits"][0]["subject"] == "second commit"
+    assert "date" in data["commits"][0]
+
+
+@needs_git
+def test_version_returns_that_revisions_markdown_and_html(git_editor):
+    url, draft, (older, newer) = git_editor
+    status, body = req(url + f"/api/version?sha={older}")
+    data = json.loads(body)
+    assert (status, data["ok"]) == (200, True)
+    assert data["md"] == "# v1\n\nfirst version\n"
+    assert "<h1" in data["html"] and "first version" in data["html"]
+
+
+@needs_git
+def test_version_rejects_non_hex_sha(git_editor):
+    url, draft, _ = git_editor
+    # a shell/git-flag injection attempt is refused before it reaches git
+    status, body = req(url + "/api/version?sha=--output=/tmp/x")
+    assert (status, json.loads(body)["ok"]) == (400, False)
+
+
+@needs_git
+def test_version_unknown_sha_conflicts(git_editor):
+    url, draft, _ = git_editor
+    status, body = req(url + "/api/version?sha=" + ("0" * 40))
+    assert status == 409
+    assert json.loads(body)["ok"] is False
+
+
+def test_history_without_git_returns_friendly_reason(editor):
+    # the plain `editor` fixture's draft is not inside a git repo
+    url, draft = editor
+    status, body = req(url + "/api/history")
+    data = json.loads(body)
+    assert (status, data["ok"]) == (409, False)
+    assert data["error"]  # the same reason the revert path surfaces
+
+
+@needs_git
+def test_git_log_and_version_helpers_agree(git_editor):
+    _, draft, (older, newer) = git_editor
+    commits, err = git_log(draft)
+    assert err is None and [c["sha"] for c in commits] == [newer, older]
+    md, err = git_version_text(draft, older)
+    assert err is None and md == "# v1\n\nfirst version\n"
+    # HEAD is the degenerate case still used by /revert
+    head_md, err = git_version_text(draft)
+    assert err is None and head_md == "# v2\n\nsecond version\n"
