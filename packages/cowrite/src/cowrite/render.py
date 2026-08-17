@@ -247,8 +247,34 @@ textarea { flex: 1 1 auto; width: 100%; border: 0; outline: none; resize: none;
   padding: 1.2rem 1.3rem; tab-size: 2;
   font: 13.5px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   color: #1f2328; background: #fff; }
-.pane.view { background: #fff; }
+.pane.view { background: #fff; position: relative; }
 .hint { font-size: 11.5px; color: #8c959f; }
+/* Version-history drawer (right side) + historical-view banner. */
+.drawer { position: fixed; top: 0; right: 0; height: 100%; width: 340px; max-width: 90vw;
+  background: #fff; border-left: 1px solid #d0d7de; box-shadow: -6px 0 22px rgba(0,0,0,.10);
+  transform: translateX(100%); transition: transform .18s ease; z-index: 30;
+  display: flex; flex-direction: column; }
+.drawer.open { transform: translateX(0); }
+.drawer .dhead { display: flex; align-items: center; gap: .6rem; padding: .6rem .9rem;
+  border-bottom: 1px solid #d0d7de; background: #f6f8fa; font-weight: 600; }
+.drawer .dhead .spacer { flex: 1 1 auto; }
+.drawer .dclose { font: inherit; cursor: pointer; border: 0; background: none; color: #656d76;
+  font-size: 18px; line-height: 1; padding: .1rem .3rem; }
+.drawer .dbody { flex: 1 1 auto; overflow: auto; }
+.drawer .dmsg { padding: 1rem .9rem; color: #656d76; font-size: 12.5px; }
+ul.versions { list-style: none; margin: 0; padding: 0; }
+ul.versions li { padding: .55rem .9rem; border-bottom: 1px solid #eaeef2; cursor: pointer; }
+ul.versions li:hover { background: #f6f8fa; }
+ul.versions li.active { background: #ddf4ff; }
+ul.versions .vsubj { font-size: 12.5px; color: #1f2328; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+ul.versions .vmeta { font-size: 11px; color: #656d76; margin-top: .15rem;
+  font-family: ui-monospace,SFMono-Regular,Menlo,monospace; }
+.histbar { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: .6rem;
+  padding: .45rem .9rem; background: #fff8c5; border-bottom: 1px solid #d4a72c;
+  color: #4d2d00; font-size: 12.5px; }
+.histbar .spacer { flex: 1 1 auto; }
+.histbar .vlabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.preview.historical { opacity: .97; }
 @media (prefers-color-scheme: dark) {
   body { color: #e6edf3; background: #0d1117; }
   header { background: #161b22; border-color: #30363d; }
@@ -259,6 +285,14 @@ textarea { flex: 1 1 auto; width: 100%; border: 0; outline: none; resize: none;
   textarea { color: #e6edf3; background: #0d1117; }
   .pane.edit { border-color: #30363d; } .pane.view { background: #0d1117; }
   .gutter { background: #30363d; } .gutter:hover, .gutter.dragging { background: #4493f8; }
+  .drawer { background: #0d1117; border-color: #30363d; }
+  .drawer .dhead { background: #161b22; border-color: #30363d; }
+  .drawer .dclose { color: #8b949e; }
+  ul.versions li { border-color: #21262d; }
+  ul.versions li:hover { background: #161b22; }
+  ul.versions li.active { background: #143452; }
+  ul.versions .vsubj { color: #e6edf3; } ul.versions .vmeta { color: #8b949e; }
+  .histbar { background: #2d2200; border-color: #6b5314; color: #f0d68a; }
 }
 """
 
@@ -282,14 +316,29 @@ _PAGE = """<!DOCTYPE html>
   <span class="presence" id="presence" hidden></span>
   <span class="hint">⌘/Ctrl+S to save &amp; render</span>
   <span class="status" id="status">loaded</span>
+  <button class="revert" id="history" title="Browse this draft's git version history">History</button>
   <button class="revert" id="revert" title="Discard changes and restore the last committed (git HEAD) version">Revert to last commit</button>
   <button class="save" id="save">Save</button>
 </header>
 <div class="split">
   <div class="pane edit"><textarea id="src" spellcheck="false">__MD__</textarea></div>
   <div class="gutter" id="gutter" title="Drag to resize · double-click to reset"></div>
-  <div class="pane view"><div class="preview note" id="preview">__PREVIEW__</div></div>
+  <div class="pane view">
+    <div class="histbar" id="histbar" hidden>
+      <span class="vlabel" id="histLabel"></span>
+      <span class="spacer"></span>
+      <button class="save" id="histRestore" title="Write this version back to the draft (through the normal save path)">Restore this version</button>
+      <button class="revert" id="histReturn" title="Return to the live editor">Return to live</button>
+    </div>
+    <div class="preview note" id="preview">__PREVIEW__</div>
+  </div>
 </div>
+<aside class="drawer" id="drawer" aria-label="Version history">
+  <div class="dhead"><span>Version history</span><span class="spacer"></span>
+    <button class="dclose" id="drawerClose" title="Close">×</button></div>
+  <div class="dbody"><div class="dmsg" id="historyMsg">Loading…</div>
+    <ul class="versions" id="historyList" hidden></ul></div>
+</aside>
 <script>
 const src = document.getElementById('src');
 const preview = document.getElementById('preview');
@@ -297,6 +346,12 @@ const status = document.getElementById('status');
 const presence = document.getElementById('presence');
 const saveBtn = document.getElementById('save');
 const revertBtn = document.getElementById('revert');
+const historyBtn = document.getElementById('history');
+const drawer = document.getElementById('drawer');
+const historyList = document.getElementById('historyList');
+const historyMsg = document.getElementById('historyMsg');
+const histbar = document.getElementById('histbar');
+const histLabel = document.getElementById('histLabel');
 let clean = src.value;          // last-saved content
 let rev = '__REV__';            // rev of the disk state this editor is based on
 let saving = false;
@@ -305,6 +360,9 @@ let saving = false;
 let COWRITE_AUTHOR = '__AUTHOR__';
 let COWRITE_COMMENTS = __COMMENTS__;
 let COWRITE_BLOCKS = __BLOCKS__;
+let viewingSha = null;          // set while the preview shows a historical version
+let viewingMd = null;           // that version's raw markdown (for Restore)
+let savedLiveHtml = null;       // the live preview HTML, stashed while viewing history
 
 function setStatus(text, cls) { status.textContent = text; status.className = 'status' + (cls ? ' ' + cls : ''); }
 function markDirty() { if (src.value !== clean) setStatus('● unsaved', 'dirty'); else setStatus('saved', 'saved'); }
@@ -429,9 +487,11 @@ async function pollDisk() {
         const scroll = src.scrollTop;
         src.value = doc.md; clean = doc.md; rev = doc.rev;
         src.scrollTop = scroll;
-        applyRendered(doc, true);
         notePresence();
-        setStatus('↻ updated from disk', 'saved');
+        // While a historical version is on screen, keep it — just refresh the
+        // stashed live HTML so "Return to live" shows the latest disk state.
+        if (viewingSha) { savedLiveHtml = doc.html; }
+        else { applyRendered(doc, true); setStatus('↻ updated from disk', 'saved'); }
       } else {
         // Keep `rev` at our base so the next save 409s and prompts.
         setStatus('⚠ changed on disk — saving will ask', 'err');
@@ -467,9 +527,97 @@ async function revert() {
   }
 }
 
+// ---- Version history (git-backed) ---------------------------------------
+function fmtDate(iso) {
+  try { const d = new Date(iso); return isNaN(d) ? iso : d.toLocaleString(); }
+  catch (e) { return iso; }
+}
+function typeset(el) {
+  if (window.MathJax && MathJax.typesetPromise) {
+    MathJax.typesetClear && MathJax.typesetClear([el]); MathJax.typesetPromise([el]);
+  }
+}
+function closeDrawer() { drawer.classList.remove('open'); }
+
+async function openHistory() {
+  drawer.classList.add('open');
+  historyList.hidden = true; historyList.innerHTML = '';
+  historyMsg.hidden = false; historyMsg.textContent = 'Loading…';
+  try {
+    const r = await fetch('api/history');
+    const data = await r.json();
+    if (!r.ok || !data.ok) {
+      // No git / untracked draft: the same friendly reason the revert path gives.
+      historyMsg.textContent = data.error || ('HTTP ' + r.status);
+      return;
+    }
+    if (!data.commits.length) {
+      historyMsg.textContent = 'No committed versions of this draft yet.';
+      return;
+    }
+    historyMsg.hidden = true; historyList.hidden = false;
+    for (const c of data.commits) {
+      const li = document.createElement('li');
+      li.dataset.sha = c.sha;
+      const subj = document.createElement('div'); subj.className = 'vsubj'; subj.textContent = c.subject;
+      const meta = document.createElement('div'); meta.className = 'vmeta';
+      meta.textContent = c.sha.slice(0, 8) + ' · ' + fmtDate(c.date);
+      li.appendChild(subj); li.appendChild(meta);
+      li.addEventListener('click', () => viewVersion(c));
+      historyList.appendChild(li);
+    }
+  } catch (e) {
+    historyMsg.hidden = false; historyList.hidden = true;
+    historyMsg.textContent = '✗ ' + e.message;
+  }
+}
+
+async function viewVersion(c) {
+  try {
+    const r = await fetch('api/version?sha=' + encodeURIComponent(c.sha));
+    const data = await r.json();
+    if (!r.ok || !data.ok) { throw new Error(data.error || ('HTTP ' + r.status)); }
+    if (!viewingSha) { savedLiveHtml = preview.innerHTML; }  // stash live view once
+    viewingSha = c.sha; viewingMd = data.md;
+    preview.innerHTML = data.html; preview.classList.add('historical'); typeset(preview);
+    histLabel.textContent = 'Historical version · ' + c.sha.slice(0, 8) + ' · ' + fmtDate(c.date) + ' (read-only)';
+    histbar.hidden = false;
+    for (const li of historyList.children) { li.classList.toggle('active', li.dataset.sha === c.sha); }
+    setStatus('viewing history', 'dirty');
+  } catch (e) {
+    setStatus('✗ ' + e.message, 'err');
+  }
+}
+
+function returnToLive() {
+  if (!viewingSha) { return; }
+  viewingSha = null; viewingMd = null;
+  histbar.hidden = true; preview.classList.remove('historical');
+  if (savedLiveHtml !== null) { preview.innerHTML = savedLiveHtml; typeset(preview); }
+  for (const li of historyList.children) { li.classList.remove('active'); }
+  markDirty();
+}
+
+async function restoreVersion() {
+  if (viewingMd === null) { return; }
+  if (!confirm('Restore this historical version into the draft?\\n\\n' +
+               'It will be written back through the normal save path — if your ' +
+               'co-writer changed the file meanwhile, you\\'ll be asked which wins.')) { return; }
+  const md = viewingMd;
+  returnToLive();
+  src.value = md;
+  if (src.value === clean) { setStatus('this version matches the current draft', 'saved'); return; }
+  markDirty();
+  await save();
+}
+
 src.addEventListener('input', () => { markDirty(); scheduleRender(); });
 saveBtn.addEventListener('click', () => save());
 revertBtn.addEventListener('click', revert);
+historyBtn.addEventListener('click', openHistory);
+document.getElementById('drawerClose').addEventListener('click', closeDrawer);
+document.getElementById('histReturn').addEventListener('click', returnToLive);
+document.getElementById('histRestore').addEventListener('click', restoreVersion);
 document.addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') { e.preventDefault(); save(); }
 });
