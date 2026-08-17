@@ -87,3 +87,38 @@ def test_api_doc_returns_full_document(editor):
     assert data["md"] == draft.read_text()
     assert data["rev"] == content_rev(data["md"])
     assert "<h1" in data["html"]
+
+
+# ---- anchored comments -------------------------------------------------------
+
+def test_page_author_from_query(editor):
+    url, _ = editor
+    _, page = req(url + "/")
+    assert b"let COWRITE_AUTHOR = 'daniel';" in page
+    _, page = req(url + "/?author=alice")
+    assert b"let COWRITE_AUTHOR = 'alice';" in page
+
+
+def test_save_of_a_comment_marker_persists_and_is_parsed(editor):
+    # inserting a comment is an ordinary save of source that contains a marker
+    url, draft = editor
+    base = content_rev(draft.read_text())
+    body_md = "# Title\n\noriginal <!-- cowrite[daniel]: tighten -->\n"
+    status, body = req(url + "/save", "POST", body_md.encode(), {"X-Base-Rev": base})
+    data = json.loads(body)
+    assert (status, data["ok"]) == (200, True)
+    # the marker lands on disk verbatim (the AI sees it on its next re-read)...
+    assert "<!-- cowrite[daniel]: tighten -->" in draft.read_text()
+    # ...and the save response carries the parsed bubble, not raw marker text
+    assert data["comments"][0]["text"] == "tighten"
+    assert data["comments"][0]["block"] == 1  # anchored to the paragraph
+    assert "cowrite" not in data["html"]
+
+
+def test_api_doc_carries_comments(editor):
+    url, draft = editor
+    draft.write_text("A. <!-- cowrite[bob]: q -->\n", encoding="utf-8")
+    _, body = req(url + "/api/doc")
+    data = json.loads(body)
+    assert data["comments"][0]["author"] == "bob"
+    assert data["comments"][0]["text"] == "q"

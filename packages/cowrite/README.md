@@ -23,6 +23,29 @@ conflict prompt instead — you choose which version wins. Without this, either
 side's save could silently revert the other's work, which looks exactly like
 "saving doesn't work".
 
+## Anchored comments
+
+Leave Google-Docs-style **review comments** on the draft without leaving the
+file. Select text in the preview, hit the floating **💬 Comment** affordance,
+and type — cowrite writes it into the Markdown as an inert HTML comment right
+after the enclosing block:
+
+```markdown
+Some paragraph the AI wrote. <!-- cowrite[daniel]: tighten this -->
+```
+
+The marker *is* the store and the protocol: the AI sees comments in context on
+its next re-read of the file — no sidecar, no API. Existing `cowrite[...]`
+markers don't show as text; cowrite parses them out and renders them as margin
+bubbles linked to their anchor block. **Resolve** on a bubble deletes the
+marker (the AI resolves the same way, by removing it once addressed). Insertion
+and resolution are ordinary saves through the existing atomic-write +
+`X-Base-Rev` path, so a concurrent AI write conflicts (409) and is handled like
+any other save. The marker author defaults to `daniel`; override it with
+`GET /?author=<name>`. Comments are attached at the end of their block (MVP
+block-level anchoring), stay greppable/strippable via the `cowrite[` prefix,
+and render nowhere the draft travels (cowrite, GitHub, the lab-notes build).
+
 A **Revert to last commit** button restores the draft to its last-committed
 (`git HEAD`) version — handy when a round of edits went the wrong way. It asks
 for confirmation (warning if you have unsaved changes), writes the committed

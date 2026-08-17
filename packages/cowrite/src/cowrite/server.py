@@ -26,9 +26,9 @@ import subprocess
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
-from .render import build_page, render_fragment
+from .render import analyze_comments, build_page, render_fragment
 
 
 def content_rev(text: str) -> str:
@@ -99,7 +99,9 @@ def make_handler(draft: Path, title: str):
             path = urlparse(self.path).path
             if path == "/":
                 md = read_draft()
-                self._send(200, build_page(md, title, str(draft), content_rev(md)).encode("utf-8"),
+                # Comment marker author (Docs-style review); defaults to "daniel".
+                author = parse_qs(urlparse(self.path).query).get("author", ["daniel"])[0]
+                self._send(200, build_page(md, title, str(draft), content_rev(md), author).encode("utf-8"),
                            "text/html; charset=utf-8")
                 return
             if path == "/api/raw":
@@ -111,7 +113,7 @@ def make_handler(draft: Path, title: str):
             if path == "/api/doc":
                 md = read_draft()
                 self._send_json(200, {"md": md, "html": render_fragment(md),
-                                      "rev": content_rev(md)})
+                                      "rev": content_rev(md), **analyze_comments(md)})
                 return
             asset = safe_asset(self.path)
             if asset is None:
@@ -134,6 +136,7 @@ def make_handler(draft: Path, title: str):
                 "saved": md,
                 "rev": content_rev(md),
                 "at": datetime.now().strftime("%H:%M:%S"),
+                **analyze_comments(md),  # refresh the review bubbles after a save
             }
 
         def do_POST(self):
