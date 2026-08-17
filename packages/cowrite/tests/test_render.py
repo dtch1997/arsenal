@@ -49,6 +49,18 @@ def test_rev_is_injected():
     assert "let rev = 'deadbeef';" in page
 
 
+def test_live_preview_and_presence_wired_in():
+    # The page must carry the debounced-render + presence-chip machinery this
+    # feature adds: the /api/render call, the debounce scheduler wired to input,
+    # and the presence chip element the pollDisk loop lights up.
+    page = build_page("# T\n\nbody\n", "t", "/tmp/d.md", "abc123")
+    assert 'id="presence"' in page
+    assert "fetch('api/render'" in page
+    assert "scheduleRender()" in page
+    assert "notePresence()" in page
+    assert "cowrite-flash" in page
+
+
 # ---- anchored comments -------------------------------------------------------
 
 def test_comment_markers_do_not_render_as_text():

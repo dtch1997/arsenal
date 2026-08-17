@@ -23,6 +23,15 @@ conflict prompt instead — you choose which version wins. Without this, either
 side's save could silently revert the other's work, which looks exactly like
 "saving doesn't work".
 
+The preview also **updates as you type** (debounced ~400ms after the last
+keystroke) — it POSTs the current buffer to `/api/render`, which renders it
+through the *same* code path as a save but never writes to disk, so what you
+see always matches what a save would land. When the co-writer edits the file
+under you, a **✍️ co-writer edited** chip appears in the header (decaying from
+"just now" to a relative timestamp) and, on the auto-refresh, the blocks that
+changed briefly flash-highlight in the preview — so the file shifting beneath
+you is visible instead of silent.
+
 ## Anchored comments
 
 Leave Google-Docs-style **review comments** on the draft without leaving the
@@ -87,7 +96,9 @@ port + URL, so several drafts can be open at once.
   `POST /save` does an *atomic* write-back (temp file + `os.replace`, so a save
   can never truncate the draft midway) and returns freshly rendered HTML.
   `POST /revert` reads the committed version via `git show HEAD:<path>` and
-  writes it back the same atomic way.
+  writes it back the same atomic way. `POST /api/render` renders a markdown
+  body to an HTML fragment for the typing-time preview — it renders only, never
+  touches disk, so it stays off the single write path.
 - **Figures / assets** referenced relatively (`![](fig.png)`, `![](plots/x.png)`)
   are served from the draft's own directory, so the preview shows them exactly
   as they'll appear. Path traversal outside that directory is blocked.
