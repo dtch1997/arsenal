@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "threads"
+version = "0.1.0"
+description = "Bottom-up activity spine: summarize Claude session transcripts, weave the summaries onto the memory registry as threads, and render an activity dashboard (per-thread sparklines, dormancy flags, unfiled-session inbox)."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Daniel Tan" }]
+dependencies = [
+    "flare @ git+https://github.com/dtch1997/arsenal#subdirectory=packages/flare",
+    "lobby @ git+https://github.com/dtch1997/arsenal#subdirectory=packages/lobby",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+threads = "threads.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/threads"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.uv.sources]
+flare = { workspace = true }
+lobby = { workspace = true }
