@@ -12,7 +12,7 @@ import subprocess
 
 import pytest
 
-from cowrite.render import build_page
+from cowrite.render import analyze_comments, build_page, render_fragment, strip_comment_markers
 
 NASTY_MD = "# T\n\n$a+b$ and `code` and __PREVIEW__ literal\n"
 
@@ -47,3 +47,68 @@ def test_no_raw_newline_inside_js_string_literals():
 def test_rev_is_injected():
     page = build_page("x", "t", "/tmp/d.md", "deadbeef")
     assert "let rev = 'deadbeef';" in page
+
+
+# ---- anchored comments -------------------------------------------------------
+
+def test_comment_markers_do_not_render_as_text():
+    html = render_fragment("A paragraph. <!-- cowrite[daniel]: tighten this -->\n")
+    assert "A paragraph." in html
+    # the marker must be parsed out, not shown (raw text or lingering comment)
+    assert "cowrite" not in html
+    assert "tighten this" not in html
+
+
+def test_strip_comment_markers_keeps_prose():
+    assert strip_comment_markers("x <!-- cowrite[a]: y -->\nz").strip() == "x \nz".strip()
+
+
+def test_analyze_anchors_comment_to_its_block():
+    md = "First para. <!-- cowrite[daniel]: fix this -->\n\nSecond para.\n"
+    data = analyze_comments(md)
+    assert len(data["blocks"]) == 2
+    assert len(data["comments"]) == 1
+    c = data["comments"][0]
+    assert (c["author"], c["text"], c["block"]) == ("daniel", "fix this", 0)
+    # offsets point exactly at the marker so the client can splice/delete it
+    assert md[c["start"]:c["end"]] == "<!-- cowrite[daniel]: fix this -->"
+
+
+def test_analyze_block_end_is_appendable():
+    md = "Alpha\n\nBeta\n"
+    data = analyze_comments(md)
+    ends = [b["end"] for b in data["blocks"]]
+    assert [md[:ends[0]], md[:ends[1]]] == ["Alpha", "Alpha\n\nBeta"]
+
+
+def test_analyze_ignores_blank_lines_inside_fences():
+    md = "```\ncode\n\nmore\n```\n\nAfter.\n"
+    data = analyze_comments(md)
+    # the fenced block (with its blank line) is one anchor block, not three
+    assert len(data["blocks"]) == 2
+
+
+def test_marker_only_block_anchors_to_preceding_content():
+    md = "A paragraph.\n\n<!-- cowrite[daniel]: standalone -->\n\nNext.\n"
+    data = analyze_comments(md)
+    # the marker-only block is not itself a content block
+    assert len(data["blocks"]) == 2
+    assert data["comments"][0]["block"] == 0
+
+
+def test_loose_list_is_a_single_block():
+    md = "- one\n\n- two\n\n- three\n"
+    assert len(analyze_comments(md)["blocks"]) == 1
+
+
+def test_author_defaults_to_daniel_and_is_configurable():
+    assert "let COWRITE_AUTHOR = 'daniel';" in build_page("x", "t", "/d.md", "r")
+    assert "let COWRITE_AUTHOR = 'alice';" in build_page("x", "t", "/d.md", "r", author="alice")
+    # authors are sanitized so they can't break the marker grammar or the JS string
+    assert "let COWRITE_AUTHOR = 'ev';" in build_page("x", "t", "/d.md", "r", author="e']v[")
+
+
+def test_comments_payload_injected_into_page():
+    page = build_page("Hi. <!-- cowrite[daniel]: note -->\n", "t", "/d.md", "r")
+    assert '"text": "note"' in page or '"text":"note"' in page
+    assert "let COWRITE_COMMENTS = [" in page
