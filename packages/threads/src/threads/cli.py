@@ -1,4 +1,5 @@
-"""``threads scan|weave|serve|render|status`` — the bottom-up activity spine.
+"""``threads scan|weave|serve|render|status|note|pickup`` — the bottom-up
+activity spine, plus the deliberate push channel (``note``/``pickup``).
 
 ``scan``/``weave`` take ``--check`` gate hooks that are cheap and offline (no
 model calls): they exit 0 iff the spool is complete and consistent.
@@ -56,6 +57,32 @@ def _cmd_vault(args) -> int:
     from .vault import write_vault
     res = write_vault()
     print(res.report())
+    return 0
+
+
+def _cmd_note(args) -> int:
+    from .note import add_note
+    from .registry import load_registry
+    body = " ".join(args.text)
+    if body in ("", "-"):
+        body = sys.stdin.read()
+    try:
+        path = add_note(args.slug, body, title=args.title, status=args.status)
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    known = load_registry().has(args.slug)
+    print(f"noted → {path}")
+    if not known:
+        print(f"  '{args.slug}' is not a memory-stub slug yet — the note seeds a "
+              "candidate thread (promotion = memory-consolidate or Daniel).")
+    print(f"  pick it back up with: threads pickup {args.slug}")
+    return 0
+
+
+def _cmd_pickup(args) -> int:
+    from .dashboard import render_pickup
+    print(render_pickup(args.slug))
     return 0
 
 
@@ -139,6 +166,25 @@ def main(argv=None) -> int:
 
     sub.add_parser("vault", help="regenerate the Obsidian-compatible vault mirror")
 
+    np = sub.add_parser(
+        "note", help="push a durable context-dump onto a thread",
+        description="Park what you're holding before moving on: "
+                    "threads note <slug> \"...\" — or pipe a longer markdown "
+                    "body via stdin (threads note <slug> - <<'EOF' ... EOF). "
+                    "cwd/branch/session are captured automatically.")
+    np.add_argument("slug", help="memory-stub slug (or a new kebab-case name "
+                                 "to seed a candidate thread)")
+    np.add_argument("text", nargs="*",
+                    help="note body; empty or '-' reads markdown from stdin")
+    np.add_argument("--title", help="one-line title (default: first line of body)")
+    np.add_argument("--status", choices=["parked", "blocked", "ongoing", "done"],
+                    help="how this thread stands as you leave it")
+
+    pp = sub.add_parser("pickup",
+                        help="print a thread's context-pack (notes + recent "
+                             "sessions) for resuming work")
+    pp.add_argument("slug")
+
     sv = sub.add_parser("serve", help="serve the dashboard through the lobby hub")
     sv.add_argument("--port", type=int, help="local port (default: free port)")
     sv.add_argument("--interval", type=int, default=60,
@@ -150,6 +196,7 @@ def main(argv=None) -> int:
     return {
         "scan": _cmd_scan, "weave": _cmd_weave, "render": _cmd_render,
         "status": _cmd_status, "serve": _cmd_serve, "vault": _cmd_vault,
+        "note": _cmd_note, "pickup": _cmd_pickup,
     }[args.cmd](args)
 
 

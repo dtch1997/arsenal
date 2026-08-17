@@ -2,7 +2,9 @@
 
 Every Claude session transcript is summarized (``threads scan``); the summaries
 are woven onto the memory registry as threads (``threads weave``); a dashboard
-renders the result (``threads serve`` / ``threads render``). The spool lives in
+renders the result (``threads serve`` / ``threads render``). Sessions can also
+*push* deliberately: ``threads note <slug>`` parks a context-dump onto a
+thread, ``threads pickup <slug>`` rehydrates it. The spool lives in
 ``~/.threads``; the registry is ``~/jarvis-memory`` (no second registry).
 """
 
@@ -12,4 +14,4 @@ from __future__ import annotations
 # callers; we deliberately do NOT re-export their functions here, since that
 # would shadow the same-named submodules on the package namespace.
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

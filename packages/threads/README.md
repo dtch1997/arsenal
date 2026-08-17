@@ -1,6 +1,7 @@
 # threads
 
-The **bottom-up activity spine**. Jarvis's memory registry (`~/jarvis-memory`)
+The **bottom-up activity spine** — plus the deliberate push channel
+(`note`/`pickup`) for parking work you're stepping away from. Jarvis's memory registry (`~/jarvis-memory`)
 is *self-reported* top-down state: a thread's line says whatever the last
 session wrote, and threads that end abruptly go stale silently. `threads` adds
 the missing *observed* layer — it reads every Claude session transcript, distils
@@ -36,6 +37,7 @@ spool does not.
 | `summaries/<session_id>.json` | one summary record per session (title, 3–6 sentence summary, artifacts, status signals, candidate slugs, keywords, deterministic match hints) |
 | `assignments.jsonl` | `{session_id, slug\|null, method, confidence}` per session |
 | `candidates/<name>.md` | agent-drafted candidate threads for unfiled clusters |
+| `notes/<slug>/<stamp>.md` | agent-pushed context-dumps (`threads note`) — frontmatter + markdown body |
 | `state.json` | scan cursor: lookback, per-run stats, and a size manifest |
 | `config.toml` | tunable knobs (relevance weights, dormancy, clustering); written with defaults on first run, never overwritten |
 | `hierarchy.md` | the thread tree — one `## <parent>` section per parent, `[[slug]]` children; agent-drafted, standing until Daniel edits |
@@ -50,6 +52,8 @@ threads render   # print the dashboard as a markdown digest (stdout); --sort/--f
 threads status   # one-line activity + gate summary
 threads serve    # serve the dashboard through the lobby hub, re-rendering every 60s
 threads vault    # regenerate the Obsidian-compatible vault mirror under ~/.threads/vault
+threads note     # push a durable context-dump onto a thread (the park move)
+threads pickup   # print a thread's context-pack (notes + recent sessions)
 ```
 
 `render` (and the served table) take `--sort {relevance,last-activity,sessions,name}`
@@ -57,6 +61,34 @@ threads vault    # regenerate the Obsidian-compatible vault mirror under ~/.thre
 `--filter-search TEXT` (over slug + latest title). The served dashboard exposes
 the same as sticky query params (`?sort=…&active_days=…&dormant=1&q=…`) so a
 sort/filter selection survives the auto-refresh.
+
+### `threads note` / `threads pickup` — the push channel
+
+Everything above is *observed*: scan reads transcripts after the fact, and a
+session you walked away from just looks "abandoned-midstream" to the
+summarizer. `note` is the *deliberate* counterpart — mid-session, an agent (or
+Daniel) parks a context-dump onto a thread before moving on:
+
+```bash
+threads note logit-interpolation "parked: PR the branch, GPU re-run needs Sid" --status parked
+threads note logit-interpolation - --status parked <<'EOF'   # longer markdown dump via stdin
+## Where this stands
+...
+## Next steps
+...
+EOF
+threads pickup logit-interpolation   # read this at the top of the resuming session
+```
+
+Notes are markdown files with frontmatter under `notes/<slug>/`; cwd, git
+branch, and `CLAUDE_SESSION_ID` (when the harness exports it) are captured
+automatically. The slug **need not exist in the registry** — a note onto a new
+kebab-case name seeds a candidate thread (shown with a `new` pill; promotion
+to a real memory stub stays a human/consolidation job). Notes count as thread
+activity (a freshly-parked thread isn't "dormant"), render in the dashboard
+drill-down and digest, and `pickup` emits registry line → notes (newest first,
+full bodies) → recent observed session summaries, ready to paste into a fresh
+session. No model calls in either command.
 
 ### `threads scan`
 

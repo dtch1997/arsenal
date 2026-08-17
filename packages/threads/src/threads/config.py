@@ -51,6 +51,10 @@ def candidates_dir() -> Path:
     return threads_dir() / "candidates"
 
 
+def notes_dir() -> Path:
+    return threads_dir() / "notes"
+
+
 def assignments_path() -> Path:
     return threads_dir() / "assignments.jsonl"
 
@@ -183,7 +187,7 @@ def load_config() -> Config:
 
 
 def ensure_spool() -> None:
-    for d in (threads_dir(), summaries_dir(), candidates_dir()):
+    for d in (threads_dir(), summaries_dir(), candidates_dir(), notes_dir()):
         d.mkdir(parents=True, exist_ok=True)
     path = config_path()
     if not path.exists():
