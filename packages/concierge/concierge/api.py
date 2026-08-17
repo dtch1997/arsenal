@@ -87,14 +87,23 @@ class Pool:
     def submit(self, spec, *, title=None, repo=None, base="main", branch=None,
                access="readwrite", gate=None, output=None, budget_usd=20.0,
                budget_minutes=240.0, priority=0, max_attempts=3, notify=None,
-               model=None) -> str:
+               model=None, after=None) -> str:
         """Enqueue a task; returns its id. `spec` is Markdown text, or a Path
         (or existing *.md path string) to read it from. `gate` is a Gate
         object (concierge.gates), default Always(). `output` declares the
         task's structured-output type: a JSON schema dict or an annotated
         class (dataclass/TypedDict). `model` pins the worker's model (default:
-        the SDK's default model)."""
+        the SDK's default model).
+
+        `after` is a list of task ids this task must run *after*: it stays
+        `held` (dispatches to no worker, consumes no concurrency seat) until
+        every dependency reaches `done`, then releases to `queued`. If any
+        dependency ends not-done (`failed`/`cancelled`) the held task fails
+        fast — it never waits forever. Every id in `after` must already exist
+        (raises ValueError otherwise); since a dep must predate its dependent,
+        cycles are impossible by construction."""
         tid = new_id()
+        after = self._validate_after(after)
         task = new_task(
             tid,
             title=title or (Path(spec).stem if isinstance(spec, Path) else f"task {tid}"),
@@ -107,10 +116,24 @@ class Pool:
             max_attempts=max_attempts,
             output_schema=_normalize_schema(output),
             model=model,
+            after=after,
         )
         self.home.spec_path(tid).write_text(_spec_text(spec))
         self.home.save(task)
         return tid
+
+    def _validate_after(self, after) -> list:
+        """Normalize + validate dependency tids at submit time: each must name
+        an existing task record (the reconciler will trust these blindly)."""
+        if not after:
+            return []
+        if isinstance(after, str):
+            after = [after]
+        deps = list(after)
+        for dep in deps:
+            if not self.home.task_path(dep).exists():
+                raise ValueError(f"after: unknown task {dep!r} — dependencies must be existing task ids")
+        return deps
 
     async def run(self, spec, *, output=None, timeout=3600.0, poll=2.0, **submit_kwargs):
         """The typed-function verb: submit, await the gate, return the output.
