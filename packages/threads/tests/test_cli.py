@@ -38,6 +38,28 @@ def test_render_prints_digest(env, canned_runner, capsys):
     assert "activity dashboard" in capsys.readouterr().out
 
 
+def test_vault_cmd_writes_index(env, canned_runner, capsys):
+    _full_scan(env, canned_runner)
+    assert main(["vault"]) == 0
+    out = capsys.readouterr().out
+    assert "vault:" in out
+    from threads import config
+    assert (config.vault_dir() / "INDEX.md").exists()
+
+
+def test_render_sort_flag(env, canned_runner, capsys):
+    _full_scan(env, canned_runner)
+    assert main(["render", "--sort", "name"]) == 0
+    assert "Sorted by name" in capsys.readouterr().out
+
+
+def test_render_filter_search_flag(env, canned_runner, capsys):
+    _full_scan(env, canned_runner)
+    assert main(["render", "--filter-search", "zzz-no-match"]) == 0
+    # nothing matches → the threads table is empty but the digest still renders
+    assert "activity dashboard" in capsys.readouterr().out
+
+
 def test_status_prints_summary(env, canned_runner, capsys):
     _full_scan(env, canned_runner)
     assert main(["status"]) == 0

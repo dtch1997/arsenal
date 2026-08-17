@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, registry, spool, summarize
+from . import config, hierarchy, registry, spool, summarize
 
 REVIEW_BUCKET = "unmatched-concierge"
 
@@ -202,6 +202,7 @@ class WeaveResult:
     assignments: list[dict] = field(default_factory=list)
     method_counts: Counter = field(default_factory=Counter)
     candidates: list[dict] = field(default_factory=list)
+    programs: list[dict] = field(default_factory=list)
     matched: int = 0
     total: int = 0
 
@@ -216,12 +217,33 @@ class WeaveResult:
             "  by method: " + ", ".join(
                 f"{m}={n}" for m, n in sorted(self.method_counts.items())),
             f"  candidate threads drafted: {len(self.candidates)}",
+            f"  program sections auto-drafted: {len(self.programs)}"
+            + (" (" + ", ".join(p["name"] for p in self.programs) + ")"
+               if self.programs else ""),
         ]
         return "\n".join(lines)
 
 
+def _thread_descriptors(rows: list[dict], summaries: list[dict]) -> list[dict]:
+    """Per matched thread: the repos + keywords its sessions touch (for the
+    program clusterer)."""
+    by_id = {r["session_id"]: r for r in summaries}
+    acc: dict[str, dict] = {}
+    for row in rows:
+        slug = row.get("slug")
+        if not slug:
+            continue
+        rec = by_id.get(row["session_id"])
+        if rec is None:
+            continue
+        d = acc.setdefault(slug, {"slug": slug, "repos": set(), "keywords": set()})
+        d["repos"].update((rec.get("hints") or {}).get("repos", []))
+        d["keywords"].update(rec.get("keywords", []))
+    return list(acc.values())
+
+
 def weave(*, runner=summarize.default_runner, model: str = config.MODEL,
-          cluster: bool = True) -> WeaveResult:
+          cluster: bool = True, vault: bool = True) -> WeaveResult:
     reg = registry.load_registry()
     summaries = spool.load_all_summaries()
     res = WeaveResult(total=len(summaries))
@@ -244,6 +266,24 @@ def weave(*, runner=summarize.default_runner, model: str = config.MODEL,
     res.assignments = rows
     if cluster and unfiled:
         res.candidates = cluster_unfiled(unfiled, runner=runner, model=model)
+
+    # Workstream 2: auto-draft program sections over clusters of matched threads.
+    try:
+        cfg = config.load_config()
+        hier = hierarchy.load_hierarchy(reg)
+        res.programs = hierarchy.draft_programs(
+            _thread_descriptors(rows, summaries), hier,
+            min_siblings=cfg.cluster_min_siblings)
+    except hierarchy.HierarchyError:
+        res.programs = []  # a broken hierarchy.md must not fail the weave
+
+    # Workstream 3: keep the Obsidian vault mirror fresh after every weave.
+    if vault:
+        try:
+            from . import vault as vault_mod
+            vault_mod.write_vault()
+        except Exception:
+            pass
     return res
 
 

@@ -10,6 +10,7 @@ import socket
 import sys
 import threading
 from dataclasses import dataclass, field
+from urllib.parse import parse_qs, urlsplit
 
 from . import dashboard
 
@@ -46,15 +47,27 @@ class ThreadsServer:
 
 def serve(*, interval: int = 60, port: int | None = None, tunnel: bool = True
           ) -> ThreadsServer:
-    """Render the dashboard, serve it, and re-render every ``interval`` seconds."""
-    cache = {"html": dashboard.render_html()}
+    """Serve the dashboard, rebuilding the model every ``interval`` seconds.
+
+    Each request renders from the cached model with *its own* query params
+    (``?sort=…&active_days=…&dormant=1&q=…``), and the page carries a meta
+    refresh back to the same URL so the sort/filter selection stays sticky
+    across the auto-refresh."""
+    cache = {"model": dashboard.build()}
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def log_message(self, *a):  # quiet
             pass
 
         def do_GET(self):
-            payload = cache["html"].encode()
+            query = parse_qs(urlsplit(self.path).query)
+            params = dashboard.params_from_query(query)
+            try:
+                html = dashboard.render_html(
+                    cache["model"], params=params, refresh=interval)
+            except Exception as e:  # never 500 the page over a render bug
+                html = f"<pre>render error: {e}</pre>"
+            payload = html.encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(payload)))
@@ -70,7 +83,7 @@ def serve(*, interval: int = 60, port: int | None = None, tunnel: bool = True
     def _loop():
         while not srv._stop.wait(interval):
             try:
-                cache["html"] = dashboard.render_html()
+                cache["model"] = dashboard.build()
             except Exception as e:  # never let the refresh thread kill serving
                 print(f"threads: re-render failed ({e})", file=sys.stderr)
 

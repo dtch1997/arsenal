@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "threads"
-version = "0.1.0"
-description = "Bottom-up activity spine: summarize Claude session transcripts, weave the summaries onto the memory registry as threads, and render an activity dashboard (per-thread sparklines, dormancy flags, unfiled-session inbox)."
+version = "0.2.0"
+description = "Bottom-up activity spine: summarize Claude session transcripts, weave the summaries onto the memory registry as threads, and render an activity dashboard (relevance sort, recursive goal/program hierarchy with roll-ups, dormancy flags, unfiled inbox, and an Obsidian-compatible vault mirror)."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"

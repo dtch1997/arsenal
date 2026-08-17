@@ -19,23 +19,39 @@ def env(tmp_path, monkeypatch):
     projects = tmp_path / "claude" / "projects"
     memory = tmp_path / "jarvis-memory"
     concierge = tmp_path / "concierge-home"
-    for d in (projects, memory, concierge / "tasks", concierge / "specs"):
+    goals = tmp_path / "goals"
+    for d in (projects, memory, concierge / "tasks", concierge / "specs", goals):
         d.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("THREADS_HOME", str(tmp_path / "threadshome"))
     monkeypatch.setenv("THREADS_PROJECTS_DIR", str(projects))
     monkeypatch.setenv("THREADS_MEMORY_DIR", str(memory))
     monkeypatch.setenv("THREADS_CONCIERGE_HOME", str(concierge))
+    monkeypatch.setenv("THREADS_GOALS_DIR", str(goals))
     monkeypatch.setenv("FLARE_HOME", str(tmp_path / "flarehome"))
     monkeypatch.delenv("FLARE_WEBHOOK", raising=False)
-    return Env(tmp_path, projects, memory, concierge)
+    return Env(tmp_path, projects, memory, concierge, goals)
 
 
 class Env:
-    def __init__(self, root, projects, memory, concierge):
+    def __init__(self, root, projects, memory, concierge, goals):
         self.root = root
         self.projects = projects
         self.memory = memory
         self.concierge = concierge
+        self.goals = goals
+
+    # ----- goals + hierarchy -----
+    def add_goal(self, slug: str, *, title: str = "", body: str = "",
+                 mentions=()):
+        text = f"---\nslug: {slug}\n---\n\n# {title or slug}\n\n{body}\n"
+        for m in mentions:
+            text += f"\nWorking on {m} this cycle.\n"
+        (self.goals / f"{slug}.md").write_text(text)
+
+    def write_hierarchy(self, text: str):
+        from threads import config
+        config.ensure_spool()
+        config.hierarchy_path().write_text(text)
 
     # ----- registry -----
     def add_stub(self, slug: str, body: str = "", memory_line: str | None = None):
