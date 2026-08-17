@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from urllib.parse import urlencode
 
-from . import config, hierarchy, registry, spool
+from . import config, hierarchy, note, registry, spool
 from .relevance import ThreadStats, relevance
 
 SPARK = "▁▂▃▄▅▆▇█"
@@ -56,6 +56,8 @@ class Thread:
     relevance: float = 0.0
     sessions_in_window: int = 0
     days_since_last: float | None = None
+    notes: list[dict] = field(default_factory=list)
+    registered: bool = True
 
     @property
     def count(self) -> int:
@@ -157,11 +159,20 @@ def build(*, now: datetime | None = None,
         elif not rec.get("trivial"):
             unfiled.append(rec)
 
+    notes_by_slug: dict[str, list[dict]] = {}
+    for n in note.load_notes():
+        notes_by_slug.setdefault(n["slug"], []).append(n)
+
     threads = []
-    for slug, recs in by_slug.items():
+    for slug in set(by_slug) | set(notes_by_slug):
+        recs = by_slug.get(slug, [])
         recs.sort(key=lambda r: (_parse_ts(r.get("t_end")) or datetime.min.replace(
             tzinfo=timezone.utc)), reverse=True)
-        last = _parse_ts(recs[0].get("t_end")) or _parse_ts(recs[0].get("t_start"))
+        notes = notes_by_slug.get(slug, [])
+        last_session = recs and (_parse_ts(recs[0].get("t_end"))
+                                 or _parse_ts(recs[0].get("t_start"))) or None
+        last_note = notes and _parse_ts(notes[0].get("created")) or None
+        last = max(filter(None, (last_session, last_note)), default=None)
         closed = reg.is_closed(slug)
         dormant = (
             not closed and last is not None
@@ -179,6 +190,7 @@ def build(*, now: datetime | None = None,
             slug=slug, sessions=recs, last_activity=last, dormant=dormant,
             closed=closed, status_line=reg.lines.get(slug, ""),
             relevance=score, sessions_in_window=in_window, days_since_last=days_since,
+            notes=notes, registered=reg.has(slug),
         ))
     threads.sort(key=lambda t: t.relevance, reverse=True)
 
@@ -300,6 +312,50 @@ def apply_view(threads: list[Thread], params: ViewParams, now: datetime) -> list
 
 
 # --------------------------------------------------------------------------- #
+# pickup — rehydrate one thread into a fresh session
+# --------------------------------------------------------------------------- #
+def render_pickup(slug: str, *, max_sessions: int = 8) -> str:
+    """Markdown context-pack for resuming ``slug``: registry line, then notes
+    (the deliberate signal, newest first, full bodies), then recent observed
+    session summaries. Meant to be read at the top of a fresh session."""
+    reg = registry.load_registry()
+    notes = note.load_notes(slug)
+    summaries = {r["session_id"]: r for r in spool.load_all_summaries()}
+    sessions = [summaries[a["session_id"]] for a in spool.load_assignments()
+                if a.get("slug") == slug and a["session_id"] in summaries]
+    sessions.sort(key=lambda r: r.get("t_end") or "", reverse=True)
+
+    L = [f"# pickup: {slug}", ""]
+    if not reg.has(slug):
+        L.append("_(no memory stub yet — candidate thread)_")
+        L.append("")
+    line = reg.lines.get(slug, "")
+    if line:
+        L += [f"**registry:** {line}", ""]
+    L.append(f"## Notes ({len(notes)})")
+    L.append("")
+    if not notes:
+        L.append("_none — nothing was deliberately parked here_")
+    for n in notes:
+        status = f" [{n['status']}]" if n.get("status") else ""
+        ctx = " · ".join(n[k] for k in ("branch", "cwd") if n.get(k))
+        L.append(f"### {n['created'][:16]}{status} — {n.get('title', '')}")
+        if ctx:
+            L.append(f"_{ctx}_")
+        L += ["", n.get("body", ""), ""]
+    L += ["", f"## Recent sessions ({len(sessions)})", ""]
+    if not sessions:
+        L.append("_none observed_")
+    for rec in sessions[:max_sessions]:
+        when = (rec.get("t_end") or "?")[:10]
+        arts = _artifact_links(rec)
+        L.append(f"- **{when}** — {rec.get('title', '')}: {rec.get('summary', '')}"
+                 + (f" ({' · '.join(arts)})" if arts else ""))
+    L.append("")
+    return "\n".join(L)
+
+
+# --------------------------------------------------------------------------- #
 # markdown digest
 # --------------------------------------------------------------------------- #
 def render_markdown(dash: Dashboard | None = None, *, now: datetime | None = None,
@@ -323,8 +379,13 @@ def render_markdown(dash: Dashboard | None = None, *, now: datetime | None = Non
         L.append("|---|---|---|---|---|---|")
         for t in threads:
             flag = " 🔴dormant" if t.dormant else ""
+            if not t.registered:
+                flag += " (new)"
+            if t.notes:
+                flag += f" 📌{len(t.notes)}"
             last = t.last_activity.date().isoformat() if t.last_activity else "?"
-            title = t.latest_title.replace("|", "/")[:60]
+            title = (t.latest_title or (t.notes[0].get("title", "") if t.notes
+                                        else "")).replace("|", "/")[:60]
             L.append(
                 f"| {t.slug}{flag} | {t.relevance:.2f} | {t.count} | {last} | "
                 f"`{t.sparkline(dash.generated_at)}` | {title} |")
@@ -347,6 +408,16 @@ def render_markdown(dash: Dashboard | None = None, *, now: datetime | None = Non
     L.append(f"- threads under no goal: "
              f"{', '.join(cov['threads_no_goal']) or '_none_'}")
     L.append("")
+    all_notes = [n for t in dash.threads for n in t.notes]
+    all_notes.sort(key=lambda n: n.get("created", ""), reverse=True)
+    if all_notes:
+        L.append("## Notes (agent-pushed)")
+        L.append("")
+        for n in all_notes[:15]:
+            status = f" [{n['status']}]" if n.get("status") else ""
+            L.append(f"- **{n['created'][:10]}** `{n['slug']}`{status} — "
+                     f"{n.get('title', '')[:80]}")
+        L.append("")
     L.append("## Unfiled inbox")
     L.append("")
     if not dash.unfiled:
@@ -404,6 +475,8 @@ details{margin:.3rem 0}summary{cursor:pointer}
 form.controls{margin:.5rem 0;font-size:13px;display:flex;gap:1rem;flex-wrap:wrap;align-items:center}
 form.controls input,form.controls select{font:inherit;font-size:12px}
 .warn{color:#b45309;background:#fef3c7;padding:.3rem .5rem;border-radius:.3rem}
+.note{white-space:pre-wrap;display:block;border-left:3px solid #f59e0b;
+padding-left:.6rem;margin-top:.2rem}
 @media(prefers-color-scheme:dark){body{background:#111;color:#ddd}
 h2{border-color:#333}th,td{border-color:#222}th,th a{color:#999}.pill{background:#223}
 .tree details{border-color:#333}.warn{background:#3b2f14;color:#fbbf24}
@@ -478,13 +551,18 @@ def render_html(dash: Dashboard | None = None, *, now: datetime | None = None,
                    + "<th>30-day</th><th>latest session</th></tr>")
         for t in threads:
             flag = " <span class='dormant'>dormant</span>" if t.dormant else ""
+            if not t.registered:
+                flag += " <span class='pill'>new</span>"
+            if t.notes:
+                flag += f" <span class='pill'>📌{len(t.notes)}</span>"
             last = t.last_activity.date().isoformat() if t.last_activity else "?"
+            title = t.latest_title or (t.notes[0].get("title", "") if t.notes else "")
             out.append(
                 f"<tr><td><a href='#t-{_esc(t.slug)}'>{_esc(t.slug)}</a>{flag}</td>"
                 f"<td class='rel'>{t.relevance:.2f}</td>"
                 f"<td>{t.count}</td><td>{last}</td>"
                 f"<td class='spark'>{t.sparkline(dash.generated_at)}</td>"
-                f"<td>{_esc(t.latest_title)[:70]}</td></tr>")
+                f"<td>{_esc(title)[:70]}</td></tr>")
         out.append("</table>")
 
     # 2. tree view (goal/program → thread → sessions)
@@ -517,6 +595,15 @@ def render_html(dash: Dashboard | None = None, *, now: datetime | None = None,
                    + "</summary>")
         if t.status_line:
             out.append(f"<p class='muted'>{_esc(t.status_line)}</p>")
+        for n in t.notes:
+            status = (f" <span class='pill'>{_esc(n['status'])}</span>"
+                      if n.get("status") else "")
+            ctx = " · ".join(_esc(n[k]) for k in ("branch", "session_id") if n.get(k))
+            out.append(
+                f"<p>📌 <b>{_esc(n['created'][:10])}</b> — {_esc(n.get('title',''))}"
+                f"{status}"
+                + (f" <span class='muted'>({ctx})</span>" if ctx else "")
+                + f"<br><span class='note'>{_esc(n.get('body',''))}</span></p>")
         for rec in t.sessions:
             ts = _parse_ts(rec.get("t_end"))
             when = ts.date().isoformat() if ts else "?"
