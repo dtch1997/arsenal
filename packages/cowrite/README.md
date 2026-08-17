@@ -4,6 +4,12 @@
 - `cowrite` serves a **side-by-side editor**: raw Markdown on the left, rendered HTML (figures, code highlighting, MathJax) on the
 right.
 - Pressing **⌘/Ctrl+S** writes the edited Markdown back to the file on disk and re-renders the preview.
+- Docs-style formatting shortcuts in the source pane: **⌘/Ctrl+B** wraps the
+  selection in `**bold**`, **⌘/Ctrl+I** in `*italic*`, **⌘/Ctrl+K** inserts a
+  `[selection](url)` link with the url pre-selected. They are pure textarea
+  string edits (no editor framework), route through `execCommand` so they join
+  the browser's native undo stack, and re-firing on an already-wrapped
+  selection unwraps it.
 
 ```
   AI drafts draft.md  →  cowrite serve draft.md  →  human edits in browser, hits ⌘S

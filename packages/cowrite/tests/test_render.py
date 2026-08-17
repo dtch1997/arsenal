@@ -124,3 +124,76 @@ def test_comments_payload_injected_into_page():
     page = build_page("Hi. <!-- cowrite[daniel]: note -->\n", "t", "/d.md", "r")
     assert '"text": "note"' in page or '"text":"note"' in page
     assert "let COWRITE_COMMENTS = [" in page
+
+
+def test_formatting_shortcuts_wired():
+    # ⌘/Ctrl + B/I/K must be bound to the textarea string-editing helpers.
+    page = build_page("body", "t", "/tmp/d.md", "abc123")
+    assert "wrapSelection('**')" in page  # bold
+    assert "wrapSelection('*')" in page  # italic
+    assert "insertLink()" in page  # link
+    assert "'](url)'" in page  # link inserts a url placeholder
+    for key in ("'b'", "'i'", "'k'"):
+        assert f"k === {key}" in page, f"missing keybinding for {key}"
+
+
+def test_formatting_uses_execcommand_for_undo():
+    # The edits route through execCommand so they join the native undo stack;
+    # setRangeText is only the offline fallback.
+    page = build_page("body", "t", "/tmp/d.md", "abc123")
+    assert "document.execCommand('insertText'" in page
+    assert "setRangeText" in page
+
+
+def test_hint_advertises_formatting():
+    page = build_page("body", "t", "/tmp/d.md", "abc123")
+    assert "B/I/C" not in page  # sanity: the hint is B/I/K
+    assert "B/I/K format" in page
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_wrap_and_link_behavior_in_node(tmp_path):
+    # Exercise the actual formatting helpers with a minimal textarea stub, so a
+    # logic regression (offsets, toggle, url placement) fails a test, not just
+    # a syntax error. We pull the helper source out of the emitted page and run
+    # it under node against a fake `src`/`document`.
+    page = build_page("body", "t", "/tmp/d.md", "abc123")
+    src_js = "\n".join(_scripts(page))
+    lo = src_js.index("function srcEdit(")
+    hi = src_js.index("src.addEventListener('keydown', (e) => {\n  if (!(e.metaKey")
+    helpers = src_js[lo:hi]
+
+    harness = (
+        "let value='', selectionStart=0, selectionEnd=0;\n"
+        "const src={focus(){}, setRangeText(t,s,e){value=value.slice(0,s)+t+value.slice(e); "
+        "this.selectionStart=this.selectionEnd=s+t.length;},\n"
+        "  get value(){return value;}, set value(v){value=v;},\n"
+        "  get selectionStart(){return selectionStart;}, set selectionStart(v){selectionStart=v;},\n"
+        "  get selectionEnd(){return selectionEnd;}, set selectionEnd(v){selectionEnd=v;}};\n"
+        "const document={execCommand(_c,_u,t){value=value.slice(0,selectionStart)+t+value.slice(selectionEnd);"
+        "selectionStart=selectionEnd=selectionStart+t.length; return true;}};\n"
+        "function markDirty(){}\n"
+        + helpers
+        + "\n"
+        # wrap a selected word in bold
+        "value='hi there'; selectionStart=3; selectionEnd=8; wrapSelection('**');\n"
+        "if (value !== 'hi **there**') throw new Error('bold wrap: '+JSON.stringify(value));\n"
+        "if (value.slice(selectionStart,selectionEnd) !== 'there') throw new Error('bold sel');\n"
+        # toggle it back off (markers now outside the same selection)
+        "wrapSelection('**');\n"
+        "if (value !== 'hi there') throw new Error('bold unwrap: '+JSON.stringify(value));\n"
+        # italic on already-bold text nests to bold+italic, it must not chew a
+        # layer off the '**' markers (the guard that keeps * from unwrapping **)
+        "value='a **b** c'; selectionStart=4; selectionEnd=5; wrapSelection('*');\n"
+        "if (value !== 'a ***b*** c') throw new Error('italic-vs-bold: '+JSON.stringify(value));\n"
+        # link inserts [sel](url) with the url pre-selected
+        "value='see docs'; selectionStart=4; selectionEnd=8; insertLink();\n"
+        "if (value !== 'see [docs](url)') throw new Error('link: '+JSON.stringify(value));\n"
+        "if (value.slice(selectionStart,selectionEnd) !== 'url') throw new Error('url sel');\n"
+        "console.log('ok');\n"
+    )
+    p = tmp_path / "behavior.js"
+    p.write_text(harness, encoding="utf-8")
+    r = subprocess.run(["node", str(p)], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "ok"

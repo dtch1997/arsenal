@@ -212,13 +212,15 @@ html, body { height: 100%; margin: 0; }
 body { display: flex; flex-direction: column;
   font: 14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
   color: #1f2328; background: #fff; }
-header { display: flex; align-items: center; gap: .9rem; flex: 0 0 auto;
-  padding: .55rem .9rem; border-bottom: 1px solid #d0d7de; background: #f6f8fa; }
-header .title { font-weight: 600; font-size: 15px; }
+header { display: flex; align-items: center; gap: .75rem; flex: 0 0 auto;
+  padding: .5rem 1rem; border-bottom: 1px solid #d0d7de; background: #f6f8fa;
+  box-shadow: 0 1px 2px rgba(27,31,36,.05); }
+header .title { font-weight: 600; font-size: 15px; letter-spacing: -.01em; }
 header .path { color: #656d76; font-size: 12px; font-family: ui-monospace,SFMono-Regular,Menlo,monospace;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40vw; }
 header .spacer { flex: 1 1 auto; }
-header .status { font-size: 12.5px; color: #656d76; min-width: 12ch; text-align: right; }
+header .status { font-size: 12.5px; color: #656d76; min-width: 14ch; text-align: right;
+  font-variant-numeric: tabular-nums; }
 header .status.dirty { color: #9a6700; }
 header .status.saved { color: #1a7f37; }
 header .status.err { color: #cf222e; }
@@ -226,13 +228,16 @@ header .presence { font-size: 12px; color: #0969da; background: rgba(9,105,218,.
   border: 1px solid rgba(9,105,218,.25); border-radius: 999px; padding: .12rem .55rem; white-space: nowrap; }
 header .presence[hidden] { display: none; }
 button.save { font: inherit; font-weight: 600; cursor: pointer; color: #fff;
-  background: #1f883d; border: 1px solid rgba(31,35,40,.15); border-radius: 6px; padding: .35rem .8rem; }
+  background: #1f883d; border: 1px solid rgba(31,35,40,.15); border-radius: 6px; padding: .35rem .8rem;
+  transition: background .12s ease; }
 button.save:hover { background: #1a7f37; }
 button.save:disabled { background: #94d3a2; cursor: default; }
 button.revert { font: inherit; font-weight: 600; cursor: pointer; color: #1f2328;
-  background: #f6f8fa; border: 1px solid rgba(31,35,40,.15); border-radius: 6px; padding: .35rem .8rem; }
+  background: #f6f8fa; border: 1px solid rgba(31,35,40,.15); border-radius: 6px; padding: .35rem .8rem;
+  transition: background .12s ease; }
 button.revert:hover { background: #eef1f4; }
 button.revert:disabled { opacity: .55; cursor: default; }
+button.save:focus-visible, button.revert:focus-visible { outline: 2px solid #0969da; outline-offset: 1px; }
 .split { flex: 1 1 auto; display: flex; min-height: 0; }
 .pane { min-width: 0; overflow: auto; }
 .pane.edit { flex: 0 0 var(--edit-width, 50%); border-right: 1px solid #d0d7de; display: flex; }
@@ -244,7 +249,7 @@ button.revert:disabled { opacity: .55; cursor: default; }
 body.resizing { cursor: col-resize; user-select: none; }
 body.resizing iframe, body.resizing textarea { pointer-events: none; }
 textarea { flex: 1 1 auto; width: 100%; border: 0; outline: none; resize: none;
-  padding: 1.2rem 1.3rem; tab-size: 2;
+  padding: 1.3rem 1.4rem; tab-size: 2; caret-color: #0969da;
   font: 13.5px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   color: #1f2328; background: #fff; }
 .pane.view { background: #fff; position: relative; }
@@ -314,7 +319,7 @@ _PAGE = """<!DOCTYPE html>
   <span class="path">__PATH__</span>
   <span class="spacer"></span>
   <span class="presence" id="presence" hidden></span>
-  <span class="hint">⌘/Ctrl+S to save &amp; render</span>
+  <span class="hint" title="⌘/Ctrl+S save · ⌘/Ctrl+B bold · ⌘/Ctrl+I italic · ⌘/Ctrl+K link">⌘/Ctrl+S save · B/I/K format</span>
   <span class="status" id="status">loaded</span>
   <button class="revert" id="history" title="Browse this draft's git version history">History</button>
   <button class="revert" id="revert" title="Discard changes and restore the last committed (git HEAD) version">Revert to last commit</button>
@@ -628,6 +633,52 @@ src.addEventListener('keydown', (e) => {
     const s = src.selectionStart, en = src.selectionEnd;
     src.value = src.value.slice(0, s) + '  ' + src.value.slice(en);
     src.selectionStart = src.selectionEnd = s + 2; markDirty(); scheduleRender(); }
+});
+
+// Docs-style formatting shortcuts (⌘/Ctrl + B/I/K): pure textarea string edits,
+// routed through execCommand where available so they join the native undo stack
+// (setRangeText fallback otherwise). B wraps **…**, I wraps *…*, K inserts a
+// [selection](url) link with the url pre-selected. Re-firing on an already
+// wrapped selection unwraps it (toggle).
+function srcEdit(s, e, text) {
+  src.focus();
+  src.selectionStart = s; src.selectionEnd = e;
+  let ok = false;
+  try { ok = document.execCommand('insertText', false, text); } catch (_) { ok = false; }
+  if (!ok) { src.setRangeText(text, s, e, 'end'); markDirty(); }
+}
+function wrapSelection(m) {
+  const s = src.selectionStart, e = src.selectionEnd, v = src.value, ml = m.length, c = m[0];
+  const sel = v.slice(s, e);
+  // unwrap when the markers sit inside the selection (**x** with 'x' or '**x**' picked)
+  const innerOk = sel.slice(ml, ml + 1) !== c && v.slice(e - ml - 1, e - ml) !== c;
+  if (sel.length >= 2 * ml && sel.slice(0, ml) === m && sel.slice(-ml) === m && innerOk) {
+    const inner = sel.slice(ml, sel.length - ml);
+    srcEdit(s, e, inner);
+    src.selectionStart = s; src.selectionEnd = s + inner.length; return;
+  }
+  // unwrap when the markers sit just outside the selection (word picked, ** around it)
+  const outerOk = v.slice(s - ml - 1, s - ml) !== c && v.slice(e + ml, e + ml + 1) !== c;
+  if (v.slice(s - ml, s) === m && v.slice(e, e + ml) === m && outerOk) {
+    srcEdit(s - ml, e + ml, sel);
+    src.selectionStart = s - ml; src.selectionEnd = e - ml; return;
+  }
+  srcEdit(s, e, m + sel + m);
+  if (sel) { src.selectionStart = s + ml; src.selectionEnd = e + ml; }
+  else { src.selectionStart = src.selectionEnd = s + ml; }
+}
+function insertLink() {
+  const s = src.selectionStart, e = src.selectionEnd, sel = src.value.slice(s, e);
+  srcEdit(s, e, '[' + sel + '](url)');
+  const u = s + sel.length + 3;  // just past '](' — select the 'url' placeholder
+  src.selectionStart = u; src.selectionEnd = u + 3;
+}
+src.addEventListener('keydown', (e) => {
+  if (!(e.metaKey || e.ctrlKey) || e.altKey) { return; }
+  const k = (e.key || '').toLowerCase();
+  if (k === 'b') { e.preventDefault(); wrapSelection('**'); }
+  else if (k === 'i') { e.preventDefault(); wrapSelection('*'); }
+  else if (k === 'k') { e.preventDefault(); insertLink(); }
 });
 if (window.MathJax && MathJax.typesetPromise) { MathJax.typesetPromise([preview]); }
 
