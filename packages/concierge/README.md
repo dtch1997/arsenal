@@ -56,6 +56,39 @@ tids = [pool.submit(spec, repo=..., gate=ShellOk("pytest -q")) for spec in varia
 results = await pool.wait_all(tids)
 ```
 
+### Task dependencies (`after=`) — parallel, then join
+
+`pool.submit(spec, after=[tid, ...])` expresses *"run this after those finish."*
+The classic shape is A/B/C in parallel, then D once all three are `done`:
+
+```python
+a = pool.submit(spec_a, repo=..., gate=ShellOk("pytest -q"))
+b = pool.submit(spec_b, repo=..., gate=ShellOk("pytest -q"))
+c = pool.submit(spec_c, repo=..., gate=ShellOk("pytest -q"))
+d = pool.submit(polish_spec, after=[a, b, c])   # queued but held until A,B,C are done
+```
+
+Every id in `after` must already exist (submit raises `ValueError` otherwise);
+because a dependency must predate its dependent, cycles are impossible by
+construction — no cycle check needed. The dependent sits in the **`held`**
+status — it consumes no worker slot and no `concurrency` seat — until the
+reconciler sees every dependency reach `done`, at which point it releases to
+`queued` and dispatches normally. If any dependency ends **not-done**
+(`failed`/`cancelled`, or its record vanishes), the held task **fails fast**
+with `dependency <tid> ended <status>` rather than waiting forever; that is not
+a gate failure, so it burns no strike and writes no `gate_result`. The `after`
+edges are surfaced on the task record (and `pool.tasks()`) so desk/dashboards
+can render the DAG, and `held` shows `status_detail: "held: waiting on <tids>"`
+narrowed to the still-unmet deps. `wait`/`wait_all` work unchanged on dependent
+tasks. The whole join lives in the reconciler and is re-derived from records on
+disk every tick — durable across daemon restarts, unlike a submitter-side
+`wait_all → submit` driver whose join dies with its process.
+
+This is deliberately **join-only** ordering (a DAG of peer tasks submitted
+top-down), not a workflow engine: fan-out/retry *within* a task stays with
+stagehand, and delegation stays the tree-shaped mechanism for a worker
+decomposing its own task.
+
 Drop a `HOUSE_RULES.md` in your `CONCIERGE_HOME` and every worker gets it
 appended to its system prompt — pool-level conventions (artifact paths,
 tooling norms, report standards) that a fresh workspace clone can't carry.
@@ -86,6 +119,10 @@ the task record: `task["gate_result"] = {"passed", "detail", "checked_at"}`.
 A task moves `queued → running → done`, with three ways to hand control back
 without failing:
 
+- **`held`** — the task was submitted with `after=[…]` and at least one
+  dependency isn't `done` yet. It holds no worker slot and burns no strike; the
+  reconciler releases it to `queued` when all deps are done, or fails it fast if
+  one ends not-done. See *Task dependencies* above.
 - **`blocked`** — the worker called `signal_blocked` with a question; a user
   message resumes it.
 - **`waiting`** — the worker called `signal_waiting`: its real work is a

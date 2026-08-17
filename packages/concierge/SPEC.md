@@ -51,8 +51,9 @@ The unit of request. One JSON record + one Markdown spec per task.
   "output_schema": { "type": "object", "properties": { } },  // or null; types the return value
   "output": null,                         // structured output, stamped on done
   "result_text": null,                    // the session's final text, stamped on done
+  "after": [],                            // dep tids (issue #54); held until all done
   "priority": 0,                          // higher = sooner; FIFO within priority
-  "status": "queued",                     // see state machine
+  "status": "queued",                     // see state machine (held | queued | …)
   "attempts": [                           // one entry per session (spawn or resume)
     { "session_id": null, "cost_usd": 0, "result": null, "log": "logs/t-0042/attempt-1/" }
   ],
@@ -174,6 +175,8 @@ Each tick (a few seconds), scan `tasks/` and reconcile:
 
 | Observation | Action |
 |---|---|
+| `held`, every `after` dep is `done` | release → `queued` (dispatches next tick) |
+| `held`, some `after` dep ended not-done (`failed`/`cancelled`/missing) | fail fast → `failed(dependency <tid> ended <status>)`, notify (no gate check, no strike) |
 | `queued`, free slot | create worktree, spawn `AgentRun`, → `running` |
 | `running`, process exited, gate **passes** | → `done`, stamp links, notify |
 | `running`, exited, worker called `signal_waiting` (current-attempt sidecar) | consume sidecar, → `waiting` (no gate check, no strike), notify |
@@ -200,17 +203,29 @@ list stays full history.
 State machine:
 
 ```
-                  ┌──── (user msg) ────┐
-                  ▼                     │
-queued ──▶ running ──▶ done          blocked
-              │  ▲                      ▲
-              │  └─ (probe/timeout/msg) │ (gate fail + worker question)
-              │  └──── waiting ◀─(signal_waiting)
-              ▼ (strikes / budget / cancel)
-           failed
+   (after=[…], deps unmet)
+   held ─(all deps done)─▶ queued ──▶ running ──▶ done          blocked
+     │                        ▲  ▲                                 ▲
+     │ (a dep ended not-done) │  └─ (probe/timeout/msg) │ (gate fail + worker question)
+     │                        │  └──── waiting ◀─(signal_waiting)
+     ▼                        ▼ (strikes / budget / cancel)
+   failed ◀──────────────── failed
 
 blocked and waiting resume back into running; neither burns a strike.
+held holds no worker slot and no concurrency seat; its fail-fast is not a gate
+failure (no strike, no gate_result).
 ```
+
+**Dependencies (`after=`, join-only orchestration).** `pool.submit(spec,
+after=[tid, …])` records the dependency tids on the task (`after` field, an
+edge list `desk`/dashboards render as a DAG) and starts it `held`. Deps are
+validated to exist at submit time — since a dep must predate its dependent,
+cycles are impossible by construction. The reconciler owns the join, derived
+from dep records on disk every tick (so it survives restarts, unlike a
+submitter-side `wait_all → submit` driver): release to `queued` once every dep
+is `done`, fail fast the moment any dep ends not-done. This is peer-task
+ordering submitted top-down — distinct from stagehand (fan-out *within* a task)
+and delegation (a worker decomposing *its own* task).
 
 Concurrency cap (default ~4) is the only scheduling sophistication in v1.
 No triage, no ranking, no backlog intelligence — `priority` int + FIFO.

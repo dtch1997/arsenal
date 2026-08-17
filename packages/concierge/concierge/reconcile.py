@@ -186,6 +186,42 @@ def _refresh_running(home, cfg, task):
                 "then stop; you will be resumed to finish when it fires.")
 
 
+def _dep_status(home, dep):
+    """A dependency's status as seen on disk; 'missing' if its record is gone
+    (removed out from under a held dependent) — treated as a not-done end."""
+    try:
+        return home.load(dep)["status"]
+    except (FileNotFoundError, ValueError, KeyError):
+        return "missing"
+
+
+def _maybe_release(home, cfg, task):
+    """Drive a held task from its dependency records — the whole join lives here,
+    derived from disk every tick so it survives daemon restarts with no in-memory
+    bookkeeping. Fail fast the moment any dep ends not-done (`failed`/`cancelled`/
+    vanished); release to `queued` once every dep is `done`. Failing here writes
+    no gate_result and burns no gate strike — it is not a gate failure."""
+    deps = task.get("after") or []
+    statuses = {dep: _dep_status(home, dep) for dep in deps}
+    for dep in deps:
+        st = statuses[dep]
+        if st in ("failed", "cancelled", "missing"):
+            _finish(home, cfg, task, "failed", f"dependency {dep} ended {st}")
+            return
+    if all(st == "done" for st in statuses.values()):
+        task["status"] = "queued"
+        task["status_detail"] = ""
+        home.save(task)
+        print(f"[concierge] {task['id']} released — dependencies satisfied", flush=True)
+        return
+    # still held: keep the visible "waiting on […]" list narrowed to unmet deps
+    pending = [dep for dep in deps if statuses[dep] != "done"]
+    detail = f"held: waiting on {', '.join(pending)}"
+    if task.get("status_detail") != detail:
+        task["status_detail"] = detail
+        home.save(task)
+
+
 def _maybe_unblock(home, cfg, task):
     msgs = home.messages(task["id"])
     if any(m["from"] == "user" for m in msgs[task["mail_delivered"]:]):
@@ -255,7 +291,9 @@ def _spent_today(tasks) -> float:
 def tick(home, cfg):
     tasks = home.tasks()
     for task in tasks:
-        if task["status"] == "running":
+        if task["status"] == "held":
+            _maybe_release(home, cfg, task)
+        elif task["status"] == "running":
             _refresh_running(home, cfg, task)
         elif task["status"] == "blocked":
             _maybe_unblock(home, cfg, task)

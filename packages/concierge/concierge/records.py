@@ -11,7 +11,7 @@ import secrets
 import time
 from pathlib import Path
 
-ACTIVE = ("queued", "running", "blocked", "waiting")
+ACTIVE = ("held", "queued", "running", "blocked", "waiting")
 TERMINAL = ("done", "failed", "cancelled")
 
 
@@ -109,7 +109,13 @@ def load_config(home: "Home") -> dict:
 
 def new_task(tid, title, gate, budget, workspace, priority=0, notify=None,
              max_attempts=3, output_schema=None, parent=None, depth=0,
-             model=None) -> dict:
+             model=None, after=None) -> dict:
+    # dependency edges (issue #54): `after` is the list of tids that must reach
+    # `done` before this task dispatches. A task with unmet deps is `held` — a
+    # first-class ACTIVE status that consumes no worker slot; the reconciler
+    # releases it to `queued` when all deps are done, or fails it fast if any
+    # dep ends not-done. Derived entirely from dep records on disk (restart-safe).
+    after = list(after or [])
     return {
         "id": tid,
         "title": title,
@@ -121,14 +127,17 @@ def new_task(tid, title, gate, budget, workspace, priority=0, notify=None,
         # are discovered by scanning for parent == tid — no denormalized list.
         "parent": parent,
         "depth": depth,
+        # join-only ordering (issue #54): dependency tids surfaced on the record
+        # so desk/dashboards can render the DAG. Empty list == no dependencies.
+        "after": after,
         # per-task model override (None = SDK default); the leaf-economics knob
         "model": model,
         "output_schema": output_schema,
         "output": None,
         "result_text": None,
         "priority": priority,
-        "status": "queued",
-        "status_detail": "",
+        "status": "held" if after else "queued",
+        "status_detail": f"held: waiting on {', '.join(after)}" if after else "",
         "gate_result": None,
         "attempts": [],
         "gate_failures": 0,
