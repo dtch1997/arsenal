@@ -80,3 +80,55 @@ def test_sparkline_length(env, write_record, canned_runner):
     weave.weave(runner=canned_runner, cluster=False)
     dash = dashboard.build(now=NOW)
     assert len(dash.threads[0].sparkline(NOW, days=30)) == 30
+
+
+def test_relevance_computed_and_sorts_table(env, write_record, canned_runner):
+    env.add_stub("hot-thread", body="repos/hot-thread")
+    env.add_stub("cold-thread", body="repos/cold-thread")
+    write_record("h1", hints={"stubs": [], "goals": [], "repos": ["hot-thread"],
+                              "branches": [], "prs": []}, t_end=NOW)
+    write_record("c1", hints={"stubs": [], "goals": [], "repos": ["cold-thread"],
+                              "branches": [], "prs": []},
+                 t_end=NOW - timedelta(days=25))
+    weave.weave(runner=canned_runner, cluster=False)
+    dash = dashboard.build(now=NOW)
+    by = {t.slug: t for t in dash.threads}
+    assert by["hot-thread"].relevance > by["cold-thread"].relevance
+    # default table sort is by relevance, descending
+    assert dash.threads[0].slug == "hot-thread"
+
+
+def test_tree_view_and_coverage(env, write_record, canned_runner):
+    env.add_stub("dogfight-rl")
+    env.add_stub("orphan-thread", body="repos/orphan-thread")
+    env.add_goal("dogfight-rl-release", mentions=["dogfight-rl"])
+    write_record("d1", hints={"stubs": ["dogfight-rl"], "goals": [], "repos": [],
+                              "branches": [], "prs": []}, t_end=NOW)
+    write_record("o1", hints={"stubs": [], "goals": [], "repos": ["orphan-thread"],
+                              "branches": [], "prs": []}, t_end=NOW)
+    weave.weave(runner=canned_runner, cluster=False)
+    dash = dashboard.build(now=NOW)
+    roots = {n.slug: n for n in dash.forest}
+    assert "dogfight-rl-release" in roots
+    goal = roots["dogfight-rl-release"]
+    assert goal.kind == "goal" and goal.sessions == 1
+    # orphan thread grouped under the synthetic unparented root
+    from threads.hierarchy import UNPARENTED
+    assert UNPARENTED in roots
+    cov = dash.coverage()
+    assert "orphan-thread" in cov["threads_no_goal"]
+    assert "dogfight-rl" not in cov["threads_no_goal"]
+    html = dashboard.render_html(dash)
+    assert "Tree view" in html and "Coverage" in html
+
+
+def test_broken_hierarchy_does_not_blank_dashboard(env, write_record, canned_runner):
+    env.add_stub("a-thread", body="repos/a-thread")
+    env.write_hierarchy("## p1\n- [[x]]\n\n## p2\n- [[x]]\n")  # x has two parents
+    write_record("s1", hints={"stubs": [], "goals": [], "repos": ["a-thread"],
+                              "branches": [], "prs": []})
+    weave.weave(runner=canned_runner, cluster=False)
+    dash = dashboard.build(now=NOW)
+    assert dash.hierarchy_error  # surfaced, not raised
+    assert dash.threads  # table still renders
+    assert "hierarchy.md ignored" in dashboard.render_html(dash)

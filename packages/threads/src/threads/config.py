@@ -16,7 +16,13 @@ their own, the spool does not.
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass, replace
 from pathlib import Path
+
+try:  # py3.11+
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover
+    tomllib = None  # type: ignore
 
 # defaults (also documented in the README)
 DEFAULT_LOOKBACK_DAYS = 30
@@ -68,6 +74,120 @@ def concierge_home() -> Path:
     return Path(override) if override else Path.home() / "concierge-home"
 
 
+def goals_dir() -> Path:
+    """The read-only ``jarvis/goals/`` tree (goal files → hierarchy roots)."""
+    override = os.environ.get("THREADS_GOALS_DIR")
+    if override:
+        return Path(override)
+    return Path.home() / "jarvis" / "goals"
+
+
+def config_path() -> Path:
+    return threads_dir() / "config.toml"
+
+
+def hierarchy_path() -> Path:
+    return threads_dir() / "hierarchy.md"
+
+
+def vault_dir() -> Path:
+    return threads_dir() / "vault"
+
+
+# --------------------------------------------------------------------------- #
+# config.toml — the tunable knobs (config-first: refine the formula in the
+# file, not the code). Written with defaults on first run, never overwritten.
+# --------------------------------------------------------------------------- #
+@dataclass(frozen=True)
+class RelevanceConfig:
+    w_sessions: float = 1.0
+    w_recency: float = 2.0
+    tau: float = 7.0
+    window_days: int = 30
+
+
+@dataclass(frozen=True)
+class Config:
+    relevance: RelevanceConfig = RelevanceConfig()
+    dormant_days: int = DEFAULT_DORMANT_DAYS
+    # auto-drafted programs: a cluster of >= this many sibling threads sharing a
+    # repo/keyword and no common parent is drafted into hierarchy.md.
+    cluster_min_siblings: int = 3
+
+
+DEFAULT_CONFIG_TOML = """\
+# threads config — tunable knobs. Edit and re-run `threads render`/`serve`;
+# nothing here is hard-coded in the package. Delete a line to fall back to the
+# built-in default.
+
+[relevance]
+# relevance = w_sessions*log1p(sessions_in_window)
+#           + w_recency*exp(-days_since_last_session / tau)
+w_sessions = 1.0
+w_recency = 2.0
+tau = 7.0
+window_days = 30
+
+[dormancy]
+# a thread with no activity in this many days (whose stub still reads active)
+# is flagged dormant.
+days = 14
+
+[clustering]
+# >= this many sibling threads sharing a repo/keyword with no common parent get
+# an auto-drafted program section in hierarchy.md.
+min_siblings = 3
+"""
+
+
+def _coerce_float(v, default: float) -> float:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def _coerce_int(v, default: int) -> int:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def load_config() -> Config:
+    """Read ``config.toml`` over the built-in defaults (missing file/keys → defaults)."""
+    base = Config()
+    path = config_path()
+    if tomllib is None or not path.exists():
+        return base
+    try:
+        data = tomllib.loads(path.read_text())
+    except (OSError, ValueError):
+        return base
+    rel = data.get("relevance") or {}
+    relevance = RelevanceConfig(
+        w_sessions=_coerce_float(rel.get("w_sessions"), base.relevance.w_sessions),
+        w_recency=_coerce_float(rel.get("w_recency"), base.relevance.w_recency),
+        tau=_coerce_float(rel.get("tau"), base.relevance.tau),
+        window_days=_coerce_int(rel.get("window_days"), base.relevance.window_days),
+    )
+    dorm = data.get("dormancy") or {}
+    clus = data.get("clustering") or {}
+    return replace(
+        base,
+        relevance=relevance,
+        dormant_days=_coerce_int(dorm.get("days"), base.dormant_days),
+        cluster_min_siblings=_coerce_int(
+            clus.get("min_siblings"), base.cluster_min_siblings),
+    )
+
+
 def ensure_spool() -> None:
     for d in (threads_dir(), summaries_dir(), candidates_dir()):
         d.mkdir(parents=True, exist_ok=True)
+    path = config_path()
+    if not path.exists():
+        try:
+            path.write_text(DEFAULT_CONFIG_TOML)
+        except OSError:
+            pass

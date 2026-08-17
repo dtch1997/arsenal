@@ -31,14 +31,31 @@ def _cmd_weave(args) -> int:
         ok, report = weave_check()
         print(report)
         return 0 if ok else 1
-    res = weave(cluster=not args.no_cluster)
+    res = weave(cluster=not args.no_cluster, vault=not args.no_vault)
     print(res.report())
     return 0
 
 
+def _view_params(args):
+    from .dashboard import ViewParams
+    return ViewParams(
+        sort=args.sort,
+        filter_active_days=args.filter_active_days,
+        dormant_only=args.filter_dormant,
+        q=args.filter_search or "",
+    ).normalized()
+
+
 def _cmd_render(args) -> int:
     from .dashboard import render_markdown
-    print(render_markdown())
+    print(render_markdown(params=_view_params(args)))
+    return 0
+
+
+def _cmd_vault(args) -> int:
+    from .vault import write_vault
+    res = write_vault()
+    print(res.report())
     return 0
 
 
@@ -80,6 +97,18 @@ def _cmd_serve(args) -> int:
     return 0
 
 
+def _add_view_flags(sp) -> None:
+    from .dashboard import SORT_KEYS
+    sp.add_argument("--sort", choices=SORT_KEYS, default="relevance",
+                    help="thread sort key (default: relevance)")
+    sp.add_argument("--filter-active-days", type=int, default=None,
+                    help="only threads active within N days")
+    sp.add_argument("--filter-dormant", action="store_true",
+                    help="only dormant threads")
+    sp.add_argument("--filter-search", default="",
+                    help="text search over slug + latest title")
+
+
 def main(argv=None) -> int:
     import argparse
 
@@ -99,11 +128,16 @@ def main(argv=None) -> int:
     wp = sub.add_parser("weave", help="assign summaries to threads")
     wp.add_argument("--no-cluster", action="store_true",
                     help="skip the candidate-thread clustering model call")
+    wp.add_argument("--no-vault", action="store_true",
+                    help="skip regenerating the Obsidian vault mirror after weave")
     wp.add_argument("--check", action="store_true",
                     help="offline gate: coverage + deterministic-match-rate thresholds")
 
-    sub.add_parser("render", help="print the dashboard as a markdown digest")
+    rp = sub.add_parser("render", help="print the dashboard as a markdown digest")
+    _add_view_flags(rp)
     sub.add_parser("status", help="one-line activity + gate summary")
+
+    sub.add_parser("vault", help="regenerate the Obsidian-compatible vault mirror")
 
     sv = sub.add_parser("serve", help="serve the dashboard through the lobby hub")
     sv.add_argument("--port", type=int, help="local port (default: free port)")
@@ -115,7 +149,7 @@ def main(argv=None) -> int:
     args = p.parse_args(argv)
     return {
         "scan": _cmd_scan, "weave": _cmd_weave, "render": _cmd_render,
-        "status": _cmd_status, "serve": _cmd_serve,
+        "status": _cmd_status, "serve": _cmd_serve, "vault": _cmd_vault,
     }[args.cmd](args)
 
 
