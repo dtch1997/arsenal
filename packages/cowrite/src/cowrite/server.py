@@ -141,6 +141,17 @@ def make_handler(draft: Path, title: str):
 
         def do_POST(self):
             path = urlparse(self.path).path
+            if path == "/api/render":
+                # Typing-time preview: render markdown to a fragment WITHOUT
+                # writing to disk, using the same render_fragment as the save
+                # path so the live preview matches what a save would land.
+                try:
+                    n = int(self.headers.get("Content-Length", "0"))
+                    md = self.rfile.read(n).decode("utf-8", errors="replace")
+                    self._send_json(200, {"ok": True, "html": render_fragment(md)})
+                except Exception as e:
+                    self._send_json(500, {"ok": False, "error": str(e)})
+                return
             if path == "/save":
                 try:
                     n = int(self.headers.get("Content-Length", "0"))

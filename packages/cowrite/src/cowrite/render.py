@@ -176,6 +176,8 @@ _NOTES_CSS = (Path(__file__).parent / "notes.css").read_text()
 _PREVIEW_CSS = """
 .preview { padding: 1.6rem 1.4rem 4rem; }
 .preview .codehilite { border-radius: 8px; }
+@keyframes cowrite-flash { from { background: rgba(9,105,218,.18); } to { background: transparent; } }
+.preview .cowrite-flash { animation: cowrite-flash 1.5s ease-out; border-radius: 4px; }
 """
 
 # Docs-style anchored comments: a highlight on the anchor block plus a margin
@@ -220,6 +222,9 @@ header .status { font-size: 12.5px; color: #656d76; min-width: 12ch; text-align:
 header .status.dirty { color: #9a6700; }
 header .status.saved { color: #1a7f37; }
 header .status.err { color: #cf222e; }
+header .presence { font-size: 12px; color: #0969da; background: rgba(9,105,218,.1);
+  border: 1px solid rgba(9,105,218,.25); border-radius: 999px; padding: .12rem .55rem; white-space: nowrap; }
+header .presence[hidden] { display: none; }
 button.save { font: inherit; font-weight: 600; cursor: pointer; color: #fff;
   background: #1f883d; border: 1px solid rgba(31,35,40,.15); border-radius: 6px; padding: .35rem .8rem; }
 button.save:hover { background: #1a7f37; }
@@ -248,6 +253,7 @@ textarea { flex: 1 1 auto; width: 100%; border: 0; outline: none; resize: none;
   body { color: #e6edf3; background: #0d1117; }
   header { background: #161b22; border-color: #30363d; }
   header .path, header .status { color: #8b949e; }
+  header .presence { color: #4493f8; background: rgba(56,139,253,.15); border-color: rgba(56,139,253,.35); }
   button.revert { color: #e6edf3; background: #21262d; border-color: #30363d; }
   button.revert:hover { background: #30363d; }
   textarea { color: #e6edf3; background: #0d1117; }
@@ -273,6 +279,7 @@ _PAGE = """<!DOCTYPE html>
   <span class="title">__TITLE__</span>
   <span class="path">__PATH__</span>
   <span class="spacer"></span>
+  <span class="presence" id="presence" hidden></span>
   <span class="hint">⌘/Ctrl+S to save &amp; render</span>
   <span class="status" id="status">loaded</span>
   <button class="revert" id="revert" title="Discard changes and restore the last committed (git HEAD) version">Revert to last commit</button>
@@ -287,6 +294,7 @@ _PAGE = """<!DOCTYPE html>
 const src = document.getElementById('src');
 const preview = document.getElementById('preview');
 const status = document.getElementById('status');
+const presence = document.getElementById('presence');
 const saveBtn = document.getElementById('save');
 const revertBtn = document.getElementById('revert');
 let clean = src.value;          // last-saved content
@@ -301,18 +309,78 @@ let COWRITE_BLOCKS = __BLOCKS__;
 function setStatus(text, cls) { status.textContent = text; status.className = 'status' + (cls ? ' ' + cls : ''); }
 function markDirty() { if (src.value !== clean) setStatus('● unsaved', 'dirty'); else setStatus('saved', 'saved'); }
 
-function applyRendered(data) {
+function applyRendered(data, flashChanged) {
+  // On a clean-editor auto-refresh we flash-highlight the blocks that changed,
+  // so the file shifting under you is visible rather than silent. A simple
+  // per-block diff of top-level rendered HTML — not a real DOM differ.
+  let oldBlocks = [];
+  if (flashChanged) {
+    preview.querySelectorAll('.cowrite-flash').forEach((el) => el.classList.remove('cowrite-flash'));
+    oldBlocks = Array.from(preview.children).map((el) => el.outerHTML);
+  }
   preview.innerHTML = data.html;
   if (data.comments) { applyComments(data.comments, data.blocks); }
+  if (flashChanged) {
+    const now = Array.from(preview.children);
+    const changed = now.filter((el, i) => el.outerHTML !== oldBlocks[i]);
+    changed.forEach((el) => el.classList.add('cowrite-flash'));
+    setTimeout(() => changed.forEach((el) => el.classList.remove('cowrite-flash')), 1600);
+  }
   if (window.MathJax && MathJax.typesetPromise) {
     MathJax.typesetClear && MathJax.typesetClear([preview]);
     MathJax.typesetPromise([preview]).then(drawComments);
   }
 }
 
+// Presence chip: surface the co-writer's external edits as a decaying header
+// chip ("✍️ co-writer edited just now" → relative timestamp), driven off the
+// same pollDisk detection that refreshes the editor.
+let coWriterAt = null, presenceTimer = null;
+function relTime(ms) {
+  const s = Math.round(ms / 1000);
+  if (s < 5) return 'just now';
+  if (s < 60) return s + 's ago';
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + 'm ago';
+  return Math.floor(m / 60) + 'h ago';
+}
+function updatePresence() {
+  if (coWriterAt == null) return;
+  presence.textContent = '✍️ co-writer edited ' + relTime(Date.now() - coWriterAt);
+}
+function notePresence() {
+  coWriterAt = Date.now();
+  presence.hidden = false;
+  updatePresence();
+  if (!presenceTimer) presenceTimer = setInterval(updatePresence, 5000);
+}
+
+// Typing-time preview: render the (unsaved) buffer ~400ms after the last
+// keystroke via /api/render (renders, never writes). A stale response — the
+// buffer moved on, or a save/poll refreshed it — is dropped so it can't
+// clobber a fresher preview.
+let renderTimer = null;
+function cancelRender() { if (renderTimer) { clearTimeout(renderTimer); renderTimer = null; } }
+function scheduleRender() {
+  cancelRender();
+  renderTimer = setTimeout(async () => {
+    renderTimer = null;
+    if (saving) { return; }
+    const sent = src.value;
+    try {
+      const r = await fetch('api/render', { method: 'POST',
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' }, body: sent });
+      const data = await r.json();
+      if (!r.ok || !data.ok) { return; }
+      if (saving || src.value !== sent) { return; }  // buffer moved on — drop it
+      applyRendered(data);
+    } catch (e) { /* preview is best-effort; the save path still renders */ }
+  }, 400);
+}
+
 async function save(baseRev) {
   if (saving || src.value === clean) { return; }
-  saving = true; saveBtn.disabled = true; setStatus('saving…');
+  saving = true; saveBtn.disabled = true; cancelRender(); setStatus('saving…');
   try {
     const r = await fetch('save', { method: 'POST',
       headers: { 'Content-Type': 'text/plain; charset=utf-8', 'X-Base-Rev': baseRev || rev },
@@ -356,11 +424,13 @@ async function pollDisk() {
     pollFails = 0;
     if (state.rev !== rev) {
       if (src.value === clean) {
+        cancelRender();  // a pending render of now-stale text must not land after
         const doc = await (await fetch('api/doc')).json();
         const scroll = src.scrollTop;
         src.value = doc.md; clean = doc.md; rev = doc.rev;
         src.scrollTop = scroll;
-        applyRendered(doc);
+        applyRendered(doc, true);
+        notePresence();
         setStatus('↻ updated from disk', 'saved');
       } else {
         // Keep `rev` at our base so the next save 409s and prompts.
@@ -397,7 +467,7 @@ async function revert() {
   }
 }
 
-src.addEventListener('input', markDirty);
+src.addEventListener('input', () => { markDirty(); scheduleRender(); });
 saveBtn.addEventListener('click', () => save());
 revertBtn.addEventListener('click', revert);
 document.addEventListener('keydown', (e) => {
@@ -409,7 +479,7 @@ src.addEventListener('keydown', (e) => {
   if (e.key === 'Tab') { e.preventDefault();
     const s = src.selectionStart, en = src.selectionEnd;
     src.value = src.value.slice(0, s) + '  ' + src.value.slice(en);
-    src.selectionStart = src.selectionEnd = s + 2; markDirty(); }
+    src.selectionStart = src.selectionEnd = s + 2; markDirty(); scheduleRender(); }
 });
 if (window.MathJax && MathJax.typesetPromise) { MathJax.typesetPromise([preview]); }
 

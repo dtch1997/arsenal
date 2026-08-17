@@ -8,6 +8,7 @@ import urllib.error
 import pytest
 from http.server import ThreadingHTTPServer
 
+from cowrite.render import render_fragment
 from cowrite.server import content_rev, make_handler
 
 
@@ -87,6 +88,29 @@ def test_api_doc_returns_full_document(editor):
     assert data["md"] == draft.read_text()
     assert data["rev"] == content_rev(data["md"])
     assert "<h1" in data["html"]
+
+
+def test_api_render_renders_without_writing(editor):
+    # Typing-time preview: markdown in -> fragment out, matching the save path's
+    # render_fragment, and the draft on disk is left untouched.
+    url, draft = editor
+    before = draft.read_text()
+    status, body = req(url + "/api/render", "POST",
+                       b"# Live\n\n*typed* not saved\n",
+                       {"Content-Type": "text/plain; charset=utf-8"})
+    data = json.loads(body)
+    assert (status, data["ok"]) == (200, True)
+    assert "<h1" in data["html"] and "<em>typed</em>" in data["html"]
+    assert data["html"] == render_fragment("# Live\n\n*typed* not saved\n")
+    assert "saved" not in data  # renders, does not write
+    assert draft.read_text() == before  # disk untouched by a preview render
+
+
+def test_api_render_empty_body(editor):
+    url, _ = editor
+    status, body = req(url + "/api/render", "POST", b"",
+                       {"Content-Type": "text/plain; charset=utf-8"})
+    assert (status, json.loads(body)["ok"]) == (200, True)
 
 
 # ---- anchored comments -------------------------------------------------------
