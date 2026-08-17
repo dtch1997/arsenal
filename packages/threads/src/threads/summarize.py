@@ -13,12 +13,22 @@ expected type, and never let a bad reply crash the sweep.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
+import tempfile
 from datetime import datetime, timezone
 
 from . import config
 from .transcripts import Session
+
+# The summarizer shells out to `claude`, which itself writes a session
+# transcript into `$CLAUDE_CONFIG_DIR/projects` (default `~/.claude/projects`).
+# If that landed in the scanned tree, scanning would *create* sessions to scan
+# (a feedback loop) and `scan --check` could never be a no-op. Redirect the
+# subprocess's config dir to an isolated, stable location so its reflections
+# never pollute the corpus.
+_ISOLATED_CONFIG_DIR = os.path.join(tempfile.gettempdir(), "threads-claude")
 
 STATUS_SIGNALS = ("wrapped-up", "blocked", "abandoned-midstream", "ongoing")
 
@@ -61,10 +71,11 @@ def default_runner(prompt: str, *, model: str) -> dict:
     ~2x faster per call, and this is a pure one-shot summarization that wants
     none of that context (auth is the ambient ``ANTHROPIC_API_KEY``).
     """
+    env = {**os.environ, "CLAUDE_CONFIG_DIR": _ISOLATED_CONFIG_DIR}
     proc = subprocess.run(
         ["claude", "-p", prompt, "--model", model, "--output-format", "json",
          "--bare"],
-        capture_output=True, text=True, timeout=300,
+        capture_output=True, text=True, timeout=300, env=env,
     )
     if proc.returncode != 0:
         raise RuntimeError(

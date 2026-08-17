@@ -275,8 +275,42 @@ def _clean_title(text: str) -> str:
     return text[:120]
 
 
+# The summarizer/cluster subprocesses are `claude -p` sessions whose first user
+# message *is* our prompt; even with CLAUDE_CONFIG_DIR isolation, any that landed
+# in the corpus (e.g. from an earlier build) must not be scanned — else scanning
+# reflects on itself. These preambles are the reliable discriminator.
+SELF_MARKERS = (
+    "You are summarizing a Claude Code session transcript",
+    "You are grouping unfiled Claude sessions into candidate threads",
+)
+
+
+def is_self_reflection(path: Path) -> bool:
+    """True if this transcript is one of threads' own summarizer/cluster calls."""
+    try:
+        with path.open(errors="replace") as f:
+            for _ in range(5):  # the prompt is the first user turn
+                line = f.readline()
+                if not line:
+                    break
+                try:
+                    d = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(d, dict) or d.get("type") != "user":
+                    continue
+                content = (d.get("message") or {}).get("content")
+                text = content if isinstance(content, str) else " ".join(
+                    _text_of(content))
+                return any(text.lstrip().startswith(m) for m in SELF_MARKERS)
+    except OSError:
+        return False
+    return False
+
+
 def iter_transcript_paths(days: int, *, now: datetime | None = None) -> list[Path]:
-    """All transcript files whose mtime falls within the last ``days``."""
+    """Transcript files whose mtime is within the last ``days``, excluding
+    threads' own summarizer/cluster reflections."""
     now = now or datetime.now(timezone.utc)
     cutoff = now.timestamp() - days * 86400
     root = config.projects_dir()
@@ -285,8 +319,11 @@ def iter_transcript_paths(days: int, *, now: datetime | None = None) -> list[Pat
     out = []
     for p in sorted(root.glob("**/*.jsonl")):
         try:
-            if p.stat().st_mtime >= cutoff:
-                out.append(p)
+            if p.stat().st_mtime < cutoff:
+                continue
         except OSError:
             continue
+        if is_self_reflection(p):
+            continue
+        out.append(p)
     return out

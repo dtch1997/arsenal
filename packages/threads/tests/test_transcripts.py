@@ -75,3 +75,26 @@ def test_concierge_detection(env):
         "proj", "s9", n_pairs=8,
         cwd="/h/concierge-home/workspaces/t-0817-abcd")
     assert parse_transcript(p).is_concierge
+
+
+def test_self_reflection_excluded_from_discovery(env):
+    from threads.transcripts import is_self_reflection, iter_transcript_paths
+    from conftest import NOW
+    real = env.add_transcript("proj", "real", cwd="/h/jarvis", n_pairs=8)
+    refl = env.add_transcript(
+        "proj", "refl", cwd="/h/jarvis", n_pairs=8,
+        extra_text="", )
+    # overwrite refl's first user turn with the summarizer preamble
+    import json as _j
+    lines = refl.read_text().splitlines()
+    lines[0] = _j.dumps({"type": "user", "timestamp": NOW.isoformat(),
+                         "message": {"role": "user", "content":
+                                     "You are summarizing a Claude Code session "
+                                     "transcript for an activity dashboard."}})
+    refl.write_text("\n".join(lines) + "\n")
+    import os
+    os.utime(refl, (NOW.timestamp(), NOW.timestamp()))
+    assert is_self_reflection(refl)
+    assert not is_self_reflection(real)
+    found = {p.stem for p in iter_transcript_paths(30, now=NOW)}
+    assert "real" in found and "refl" not in found
