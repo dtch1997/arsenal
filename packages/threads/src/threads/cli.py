@@ -63,10 +63,12 @@ def _cmd_status(args) -> int:
 def _cmd_serve(args) -> int:
     from .server import serve
     srv = serve(interval=args.interval, port=args.port, tunnel=not args.no_tunnel)
-    print(f"local:  {srv.local_url}")
+    # flush=True so the URL lands in the log immediately under `tmux ... > log`
+    # (the process then blocks in the keep-alive loop and never flushes on exit).
+    print(f"local:  {srv.local_url}", flush=True)
     if srv.url != srv.local_url:
-        print(f"PUBLIC: {srv.url}")
-    print("serving in the background; Ctrl-C here to stop.")
+        print(f"PUBLIC: {srv.url}", flush=True)
+    print("serving in the background; Ctrl-C here to stop.", flush=True)
     try:
         while srv.alive:
             time.sleep(1)
