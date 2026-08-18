@@ -26,6 +26,7 @@ import sys
 import tempfile
 import time
 from datetime import timedelta
+from uuid import uuid4
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
@@ -61,6 +62,7 @@ async def main() -> None:
         if not os.environ.get(var):
             sys.exit(f"missing env: {var} (see module docstring)")
     t0 = time.monotonic()
+    run_prefix = f"bellhop-e2e-{uuid4().hex[:8]}"   # scope names + gc to THIS run
     with tempfile.TemporaryDirectory() as td:
         (pathlib.Path(td) / "train.py").write_text(TRAIN_PY)
         out = tempfile.mkdtemp(prefix="bellhop-nebius-e2e-")
@@ -72,6 +74,7 @@ async def main() -> None:
             fabric=os.environ["NEBIUS_FABRIC"],
             gpu="H100", nodes=2, gpu_count=1,
             boot_disk_gb=200, max_lifetime=timedelta(hours=1),
+            name=run_prefix,
         )
         res = await run_cluster(spec, config)
         print(f"\nrun_cluster returned: cluster={res.pod_id} exit={res.remote_exit} "
@@ -81,8 +84,8 @@ async def main() -> None:
         print("pulled results/allreduce.json:", payload)
         assert payload["allreduce_sum"] == 1.0 and payload["world_size"] == 2
 
-    leftover = await gc_nebius(timedelta(seconds=0), dry_run=True)
-    print("bellhop-named resources remaining:", leftover or "none")
+    leftover = await gc_nebius(timedelta(seconds=0), name_prefix=run_prefix, dry_run=True)
+    print("this run's resources remaining:", leftover or "none")
     assert not leftover, "teardown left resources behind!"
     print(f"\nE2E PASSED in {time.monotonic()-t0:.0f}s")
 

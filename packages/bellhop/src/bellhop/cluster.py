@@ -32,7 +32,10 @@ import time
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:  # keep the nebius import (and its optional SDK) lazy + break the cycle
+    from .nebius_box import NebiusClusterConfig
 
 from .backend import ExecResult
 from .errors import (
@@ -361,7 +364,7 @@ async def cluster(config: ClusterConfig, *, api_key: str | None = None):
         await rest.aclose()
 
 
-async def run_cluster(spec: RunSpec, config, *,
+async def run_cluster(spec: RunSpec, config: ClusterConfig | NebiusClusterConfig, *,
                       api_key: str | None = None) -> RunResult:
     """One-shot multi-node pipeline; the N-node sibling of :func:`bellhop.run`.
 

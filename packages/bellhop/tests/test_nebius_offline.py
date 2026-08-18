@@ -15,6 +15,12 @@ class _AlwaysReady:
         return True
 
 
+async def _drain(ctx):
+    """Enter and immediately exit an async cluster ctx (provision + teardown)."""
+    async with ctx:
+        pass
+
+
 def _cfg(tmp_path, **kw):
     key = tmp_path / "id"
     key.write_text("x")
@@ -90,6 +96,7 @@ class _FakeApi:
         self.created = {"gpu_clusters": [], "disks": [], "instances": []}
         self.deleted = {"gpu_clusters": [], "disks": [], "instances": []}
         self.user_data = None
+        self.instance_kw: dict[int, dict] = {}      # rank -> recorded create payload
         self._polls: dict[str, int] = {}
         self.listing: list[tuple[str, dict]] = []   # (kind, item) for gc tests
 
@@ -111,6 +118,9 @@ class _FakeApi:
         if rank in self.fail_instance_ranks:
             raise ProvisionError("Quota exceeded: compute.instances.gpus")
         self.user_data = kw["cloud_init_user_data"]
+        # pin the create payload the lifecycle test asserts on
+        self.instance_kw[rank] = {"preemptible": kw["preemptible"],
+                                  "gpu_cluster_id": kw["gpu_cluster_id"]}
         iid = f"inst-{rank}"
         self.created["instances"].append((iid, name, kw["platform"], kw["preset"]))
         return iid
@@ -163,6 +173,39 @@ def test_cluster_lifecycle(tmp_path):
     assert sorted(api.deleted["instances"]) == ["inst-0", "inst-1"]
     assert sorted(api.deleted["disks"]) == ["disk-0", "disk-1"]
     assert api.deleted["gpu_clusters"] == ["gpucluster-0"]
+    # create payload: default tier is non-preemptible; every node joins the cluster
+    assert api.instance_kw[0] == {"preemptible": False, "gpu_cluster_id": "gpucluster-0"}
+    assert api.instance_kw[1] == {"preemptible": False, "gpu_cluster_id": "gpucluster-0"}
+    # every resource name keeps config.name as prefix + one shared per-run suffix
+    cl_name = api.created["gpu_clusters"][0][1]
+    disk_names = [d[1] for d in api.created["disks"]]
+    inst_names = [i[1] for i in api.created["instances"]]
+    assert cl_name.startswith("bellhop-")
+    suffix = cl_name[len("bellhop-"):]              # the uuid piece
+    assert all(n.startswith(f"bellhop-{suffix}-") for n in disk_names + inst_names)
+
+
+def test_preemptible_flag_flows_to_create(tmp_path):
+    api = _FakeApi()
+
+    async def _run():
+        async with nebius_cluster(_cfg(tmp_path, nodes=2, preemptible=True), _api=api):
+            pass
+
+    asyncio.run(_run())
+    assert api.instance_kw[0]["preemptible"] is True
+    assert api.instance_kw[1]["preemptible"] is True
+
+
+def test_per_run_suffix_differs_across_runs(tmp_path):
+    """Two runs of the same config name never collide — gc can scope to one."""
+    names = []
+    for _ in range(2):
+        api = _FakeApi()
+        asyncio.run(_drain(nebius_cluster(_cfg(tmp_path, nodes=2), _api=api)))
+        names.append(api.created["gpu_clusters"][0][1])
+    assert names[0] != names[1]
+    assert all(n.startswith("bellhop-") for n in names)
 
 
 def test_partial_instance_failure_tears_down_survivors(tmp_path):
@@ -176,6 +219,22 @@ def test_partial_instance_failure_tears_down_survivors(tmp_path):
         asyncio.run(_run())
     # the rank-0 instance that DID come up is deleted, plus all disks + cluster
     assert api.deleted["instances"] == ["inst-0"]
+    assert sorted(api.deleted["disks"]) == ["disk-0", "disk-1"]
+    assert api.deleted["gpu_clusters"] == ["gpucluster-0"]
+
+
+def test_watchdog_teardown_is_not_duplicated(tmp_path):
+    """max_lifetime fires mid-run, then ctx-exit also runs — each id deleted once."""
+    api = _FakeApi()
+    cfg = _cfg(tmp_path, nodes=2, max_lifetime=timedelta(seconds=0))
+
+    async def _run():
+        async with nebius_cluster(cfg, _api=api):
+            await asyncio.sleep(0.05)   # let the watchdog fire while yielded
+
+    asyncio.run(_run())
+    # single-shot teardown: no id appears twice despite two teardown paths
+    assert sorted(api.deleted["instances"]) == ["inst-0", "inst-1"]
     assert sorted(api.deleted["disks"]) == ["disk-0", "disk-1"]
     assert api.deleted["gpu_clusters"] == ["gpucluster-0"]
 
@@ -218,14 +277,25 @@ def test_gc_reaps_by_prefix_and_age(tmp_path):
         ("instances", {"id": "inst-a", "name": "bellhop-0", "created_at": old}),
         ("instances", {"id": "inst-b", "name": "bellhop-1", "created_at": young}),
         ("instances", {"id": "inst-c", "name": "prod-db", "created_at": old}),
+        # unknown creation time must never be treated as old
+        ("instances", {"id": "inst-d", "name": "bellhop-2", "created_at": None}),
         ("disks", {"id": "disk-a", "name": "bellhop-0-boot", "created_at": old}),
         ("gpu_clusters", {"id": "gc-a", "name": "bellhop", "created_at": old}),
     ]
     reaped = asyncio.run(gc_nebius(timedelta(hours=24), project_id="project-x", _api=api))
     assert {r["id"] for r in reaped} == {"inst-a", "disk-a", "gc-a"}
-    assert api.deleted["instances"] == ["inst-a"]      # young + foreign survive
+    assert api.deleted["instances"] == ["inst-a"]      # young + foreign + unknown-age survive
     assert api.deleted["disks"] == ["disk-a"]
     assert api.deleted["gpu_clusters"] == ["gc-a"]
+
+
+def test_gc_skips_unknown_created_at(tmp_path):
+    """A resource whose created_at is None is never reaped (unknown age != old)."""
+    api = _FakeApi()
+    api.listing = [("instances", {"id": "i", "name": "bellhop-0", "created_at": None})]
+    reaped = asyncio.run(gc_nebius(timedelta(hours=24), project_id="p", _api=api))
+    assert reaped == []
+    assert api.deleted["instances"] == []
 
 
 def test_gc_dry_run_deletes_nothing():

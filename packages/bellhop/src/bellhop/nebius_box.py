@@ -33,10 +33,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import sys
 import time
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
+from uuid import uuid4
 
 from .cluster import Cluster, DEFAULT_RDZV_PORT
 from .errors import PodNotReadyError, PreflightError, ProvisionError
@@ -236,7 +238,12 @@ class _NebiusApi:
         from nebius.api.nebius.compute.v1 import (
             AttachedDiskSpec, CreateInstanceRequest, ExistingDisk, IPAddress,
             InstanceGpuClusterSpec, InstanceSpec, NetworkInterfaceSpec,
-            PublicIPAddress, ResourcesSpec)
+            PreemptibleSpec, PublicIPAddress, ResourcesSpec)
+        # InstanceSpec.preemptible is a PreemptibleSpec message, not a bool:
+        # request the cheaper interruptible tier (STOP on preemption) only when
+        # asked, and leave the field at its default otherwise.
+        preempt = (PreemptibleSpec(on_preemption=PreemptibleSpec.PreemptionPolicy.STOP)
+                   if preemptible else None)
         op = await self._instances.create(CreateInstanceRequest(
             metadata=ResourceMetadata(parent_id=project_id, name=name),
             spec=InstanceSpec(
@@ -250,9 +257,10 @@ class _NebiusApi:
                     ip_address=IPAddress(),
                     public_ip_address=PublicIPAddress())],
                 cloud_init_user_data=cloud_init_user_data,
-                preemptible=preemptible)))
-        # instance creation is the long pole (minutes); the caller polls
-        # get_instance instead of blocking on the operation
+                preemptible=preempt)))
+        # settle the create op so the resource exists before we poll
+        # get_instance for RUNNING + addressable (the long, minutes-scale wait)
+        await op.wait()
         return op.resource_id
 
     async def get_instance(self, instance_id: str) -> dict:
@@ -362,27 +370,39 @@ async def _create_tracked(coros, into: list[str], what: str) -> None:
 
 async def _teardown_all(api: _NebiusApi, instance_ids: list[str],
                         disk_ids: list[str], cluster_id: str | None) -> None:
-    """Best-effort full teardown; safe on partially-created fleets."""
+    """Best-effort full teardown; safe on partially-created fleets.
+
+    A failed delete leaves paid GPUs running, so every failure is logged to
+    stderr (kind + id) rather than swallowed — but order is preserved: all
+    instances (concurrently), then disks, then the cluster.
+    """
     results = await asyncio.gather(
         *(api.delete_instance(i) for i in instance_ids), return_exceptions=True)
-    del results  # instance deletes must settle before disks detach
+    for iid, r in zip(instance_ids, results, strict=True):  # settle before disks detach
+        if isinstance(r, BaseException):
+            print(f"bellhop: nebius instance {iid} delete failed: {r!r}",
+                  file=sys.stderr, flush=True)
     for d in disk_ids:
-        with contextlib.suppress(Exception):
+        try:
             await api.delete_disk(d)
+        except Exception as e:
+            print(f"bellhop: nebius disk {d} delete failed: {e!r}",
+                  file=sys.stderr, flush=True)
     if cluster_id:
-        with contextlib.suppress(Exception):
+        try:
             await api.delete_gpu_cluster(cluster_id)
+        except Exception as e:
+            print(f"bellhop: nebius gpu-cluster {cluster_id} delete failed: {e!r}",
+                  file=sys.stderr, flush=True)
 
 
-async def _lifetime_watchdog(api: _NebiusApi, instance_ids: list[str],
-                             disk_ids: list[str], cluster_id: str,
-                             lifetime: timedelta) -> None:
+async def _lifetime_watchdog(cluster_id: str, lifetime: timedelta, teardown) -> None:
+    """Sleep out ``max_lifetime`` then run the shared single-shot ``teardown``."""
     await asyncio.sleep(lifetime.total_seconds())
-    import sys
     print(f"bellhop: nebius cluster {cluster_id} hit max_lifetime {lifetime} — tearing down",
           file=sys.stderr, flush=True)
     with contextlib.suppress(Exception):
-        await _teardown_all(api, instance_ids, disk_ids, cluster_id)
+        await teardown()
 
 
 @contextlib.asynccontextmanager
@@ -399,20 +419,36 @@ async def nebius_cluster(config: NebiusClusterConfig, *, sdk=None, _api=None):
 
     api = _api or _NebiusApi(sdk)
     subnet = config.subnet_id or await api.first_subnet(project)
+    # One per-run suffix keeps config.name as the (gc-matchable) prefix while
+    # making every resource name unique, so concurrent runs sharing a name
+    # never see or reap each other's fleet.
+    prefix = f"{config.name}-{uuid4().hex[:8]}"
     cluster_id: str | None = None
     disk_ids: list[str] = []
     instance_ids: list[str] = []
+
+    torn_down = False
+    async def _teardown_once() -> None:
+        # single-shot: the watchdog may fire mid-run and the ctx exit also
+        # tears down — running _teardown_all twice would issue concurrent
+        # deletes on the same ids, which Nebius rejects.
+        nonlocal torn_down
+        if torn_down:
+            return
+        torn_down = True
+        await _teardown_all(api, instance_ids, disk_ids, cluster_id)
+
     try:
-        cluster_id = await api.create_gpu_cluster(project, config.name, config.fabric)
+        cluster_id = await api.create_gpu_cluster(project, prefix, config.fabric)
         await _create_tracked(
-            (api.create_boot_disk(project, f"{config.name}-{r}-boot",
+            (api.create_boot_disk(project, f"{prefix}-{r}-boot",
                                   size_gb=config.boot_disk_gb,
                                   image_family=config.image_family)
              for r in range(config.nodes)),
             disk_ids, "boot-disk create")
         user_data = _cloud_init(config.ssh_user, pubkey)
         await _create_tracked(
-            (api.create_instance(project, f"{config.name}-{r}", platform=platform,
+            (api.create_instance(project, f"{prefix}-{r}", platform=platform,
                                  preset=preset, gpu_cluster_id=cluster_id,
                                  boot_disk_id=disk_ids[r], subnet_id=subnet,
                                  cloud_init_user_data=user_data,
@@ -420,21 +456,25 @@ async def nebius_cluster(config: NebiusClusterConfig, *, sdk=None, _api=None):
              for r in range(config.nodes)),
             instance_ids, "instance create")
         nodes = [NebiusNode(api, iid, node_cfg, did)
-                 for iid, did in zip(instance_ids, disk_ids)]
+                 for iid, did in zip(instance_ids, disk_ids, strict=True)]
         await asyncio.gather(*(n._wait_provision() for n in nodes))
         await asyncio.gather(*(n._wait_ready() for n in nodes))
         ips = {rank: n.private_ip for rank, n in enumerate(nodes)}
         clu = Cluster(cluster_id, nodes, ips, config.rendezvous_port,
                       nccl_socket_ifname=config.nccl_socket_ifname,
                       workdir=f"/home/{config.ssh_user}")
-        watchdog = asyncio.create_task(_lifetime_watchdog(
-            api, instance_ids, disk_ids, cluster_id, config.max_lifetime))
+        watchdog = asyncio.create_task(
+            _lifetime_watchdog(cluster_id, config.max_lifetime, _teardown_once))
         try:
             yield clu
         finally:
+            # drain the watchdog before tearing down, so its teardown (if any)
+            # can't race the ctx-exit teardown on the same resource ids
             watchdog.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await watchdog
     finally:
-        await _teardown_all(api, instance_ids, disk_ids, cluster_id)
+        await _teardown_once()
 
 
 async def gc_nebius(older_than: timedelta, *, project_id: str | None = None,
@@ -462,7 +502,9 @@ async def gc_nebius(older_than: timedelta, *, project_id: str | None = None,
             if not (item["name"] or "").startswith(name_prefix):
                 continue
             created = item["created_at"]
-            if created and (now - created) < older_than:
+            if created is None:
+                continue  # unknown age is not old age — never reap
+            if (now - created) < older_than:
                 continue
             if not dry_run:
                 with contextlib.suppress(Exception):
