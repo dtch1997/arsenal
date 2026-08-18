@@ -67,6 +67,32 @@ def _mcp_overrides(home: Home, tid: str, attempt: int) -> list[str]:
     ]
 
 
+def _strict_schema(node):
+    """OpenAI's structured-output API ("strict" schemas) rejects any object
+    node that doesn't set additionalProperties=false and list every property
+    in `required` (400 invalid_json_schema — hit live on the first A/B task).
+    Concierge submitters write plain JSON Schema, so the adapter normalizes:
+    properties the submitter left optional become nullable instead."""
+    if isinstance(node, list):
+        return [_strict_schema(n) for n in node]
+    if not isinstance(node, dict):
+        return node
+    out = {k: _strict_schema(v) for k, v in node.items()}
+    if out.get("type") == "object" or "properties" in out:
+        props = out.get("properties", {})
+        out.setdefault("additionalProperties", False)
+        originally_required = set(out.get("required", []))
+        for name, sub in props.items():
+            if name not in originally_required and isinstance(sub, dict):
+                t = sub.get("type")
+                if isinstance(t, str) and t != "null":
+                    sub["type"] = [t, "null"]
+                elif isinstance(t, list) and "null" not in t:
+                    sub["type"] = [*t, "null"]
+        out["required"] = list(props)
+    return out
+
+
 def build_command(home: Home, task: dict, cfg: dict, resume: str | None,
                   output_schema: dict | None, attempt: int, log_dir: Path) -> list[str]:
     """The full `codex exec` argv. Exec-level flags come first, then either the
@@ -85,7 +111,10 @@ def build_command(home: Home, task: dict, cfg: dict, resume: str | None,
         *_mcp_overrides(home, task["id"], attempt),
     ]
     if output_schema is not None:
-        schema_path = log_dir / "output_schema.json"  # written by Worker.spawn
+        # not the Worker.spawn-written output_schema.json: codex needs the
+        # OpenAI-strict normalization of it, written alongside
+        schema_path = log_dir / "output_schema.codex.json"
+        schema_path.write_text(json.dumps(_strict_schema(output_schema)))
         flags += ["--output-schema", str(schema_path)]
     prompt_path = log_dir / "prompt.md"
     prompt = prompt_path.read_text()

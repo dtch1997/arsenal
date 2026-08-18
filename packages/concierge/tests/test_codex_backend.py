@@ -101,16 +101,59 @@ def test_fresh_run_has_no_resume(tmp_path):
     assert cmd[-1] == "do the thing"
 
 
-def test_output_schema_flag(tmp_path):
+def test_output_schema_flag_points_at_strictified_copy(tmp_path):
     home, task, log_dir = _task(tmp_path)
     schema = {"type": "object", "properties": {"x": {"type": "integer"}}}
     (log_dir / "output_schema.json").write_text(json.dumps(schema))
     cmd = codex.build_command(home, task, {}, None, schema, 1, log_dir)
     assert "--output-schema" in cmd
-    assert cmd[cmd.index("--output-schema") + 1] == str(log_dir / "output_schema.json")
+    # codex gets the OpenAI-strict normalization, not the verbatim schema
+    strict_path = log_dir / "output_schema.codex.json"
+    assert cmd[cmd.index("--output-schema") + 1] == str(strict_path)
+    strict = json.loads(strict_path.read_text())
+    assert strict["additionalProperties"] is False
+    assert strict["required"] == ["x"]
     # absent when no schema
     cmd = codex.build_command(home, task, {}, None, None, 1, log_dir)
     assert "--output-schema" not in cmd
+
+
+def test_strict_schema_normalization():
+    # The live 400 from the first A/B task: a plain schema without
+    # additionalProperties must come out strict at every object node, with
+    # originally-optional properties made nullable instead of required-by-force.
+    schema = {
+        "type": "object",
+        "properties": {
+            "summary": {"type": "string"},
+            "extra": {"type": "string"},
+            "nested": {
+                "type": "object",
+                "properties": {"a": {"type": "integer"}},
+                "required": ["a"],
+            },
+            "items": {"type": "array",
+                      "items": {"type": "object",
+                                "properties": {"b": {"type": "number"}}}},
+        },
+        "required": ["summary", "nested", "items"],
+    }
+    strict = codex._strict_schema(schema)
+    assert strict["additionalProperties"] is False
+    assert sorted(strict["required"]) == ["extra", "items", "nested", "summary"]
+    # originally optional -> nullable; originally required -> untouched
+    assert strict["properties"]["extra"]["type"] == ["string", "null"]
+    assert strict["properties"]["summary"]["type"] == "string"
+    # recursion: nested objects and array item schemas are strictified too
+    nested = strict["properties"]["nested"]
+    assert nested["additionalProperties"] is False and nested["required"] == ["a"]
+    items = strict["properties"]["items"]["items"]
+    assert items["additionalProperties"] is False
+    assert items["properties"]["b"]["type"] == ["number", "null"]
+    # already-strict schemas pass through unchanged
+    assert codex._strict_schema(strict) == strict
+    # the input schema is not mutated
+    assert "additionalProperties" not in schema
 
 
 def test_mcp_overrides_registered(tmp_path):
