@@ -19,6 +19,8 @@ def isolated_home(tmp_path, monkeypatch):
     """Point spool + config at a throwaway home; clear ambient context env."""
     monkeypatch.setenv("FLARE_HOME", str(tmp_path))
     monkeypatch.delenv("FLARE_WEBHOOK", raising=False)
+    monkeypatch.delenv("FLARE_SLACK_TOKEN", raising=False)
+    monkeypatch.delenv("FLARE_SLACK_CHANNEL", raising=False)
     monkeypatch.delenv("FLARE_LOG", raising=False)
     monkeypatch.delenv("FLARE_CONFIG", raising=False)
     monkeypatch.delenv("CLAUDE_SESSION_ID", raising=False)
@@ -145,7 +147,7 @@ def test_transport_failure_does_not_raise(isolated_home, monkeypatch, capsys):
     monkeypatch.setattr(core, "_post_slack", boom)
     rec = flare.send("still alive", sev="warn")
     assert rec["sent"] is False
-    assert "webhook post failed" in capsys.readouterr().err
+    assert "slack post failed" in capsys.readouterr().err
     # spooled despite the failure
     assert len(_read_spool(isolated_home)) == 1
 
@@ -189,4 +191,58 @@ def _child_env(home):
     env = dict(os.environ)
     env["FLARE_HOME"] = str(home)
     env.pop("FLARE_WEBHOOK", None)
+    env.pop("FLARE_SLACK_TOKEN", None)
+    env.pop("FLARE_SLACK_CHANNEL", None)
     return env
+
+
+def test_bot_token_transport_from_env(isolated_home, monkeypatch):
+    monkeypatch.setenv("FLARE_SLACK_TOKEN", "xoxb-test")
+    monkeypatch.setenv("FLARE_SLACK_CHANNEL", "C123")
+    posts = []
+    monkeypatch.setattr(
+        core, "_post_slack_bot",
+        lambda token, channel, text: posts.append((token, channel, text)))
+    rec = flare.send("via bot", sev="warn")
+    assert rec["sent"] is True
+    assert posts == [("xoxb-test", "C123", core.format_slack(rec))]
+
+
+def test_webhook_wins_over_bot_token(isolated_home, monkeypatch):
+    monkeypatch.setenv("FLARE_WEBHOOK", "https://hooks.example/x")
+    monkeypatch.setenv("FLARE_SLACK_TOKEN", "xoxb-test")
+    monkeypatch.setenv("FLARE_SLACK_CHANNEL", "C123")
+    hooks, bots = [], []
+    monkeypatch.setattr(core, "_post_slack", lambda url, text: hooks.append(url))
+    monkeypatch.setattr(
+        core, "_post_slack_bot", lambda *a: bots.append(a))
+    rec = flare.send("prefer webhook")
+    assert rec["sent"] is True and hooks and not bots
+
+
+def test_bot_token_from_config(isolated_home, monkeypatch):
+    cfg = isolated_home / ".config" / "flare" / "config.toml"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text('[slack]\nbot_token = "xoxb-cfg"\nchannel = "C9"\n')
+    assert core.bot_credentials() == ("xoxb-cfg", "C9")
+
+
+def test_bot_token_needs_both_halves(isolated_home, monkeypatch):
+    monkeypatch.setenv("FLARE_SLACK_TOKEN", "xoxb-test")
+    assert core.bot_credentials() is None
+    rec = flare.send("half-configured")
+    assert rec["sent"] is False
+
+
+def test_bot_api_ok_false_spools_not_sent(isolated_home, monkeypatch, capsys):
+    monkeypatch.setenv("FLARE_SLACK_TOKEN", "xoxb-test")
+    monkeypatch.setenv("FLARE_SLACK_CHANNEL", "C123")
+
+    def boom(token, channel, text):
+        raise RuntimeError("chat.postMessage: channel_not_found")
+
+    monkeypatch.setattr(core, "_post_slack_bot", boom)
+    rec = flare.send("bad channel")
+    assert rec["sent"] is False
+    assert "spooled only" in capsys.readouterr().err
+    assert len(_read_spool(isolated_home)) == 1
