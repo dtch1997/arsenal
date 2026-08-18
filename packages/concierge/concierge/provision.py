@@ -62,6 +62,35 @@ def install_guard_hook(ws: Path) -> None:
                            check=False, capture_output=True)
 
 
+_AGENTS_REL = "AGENTS.md"
+_HOUSE_MARKER = "<!-- concierge:house-rules -->"
+
+
+def install_house_rules(ws: Path, home_root: Path) -> None:
+    """Append the pool's HOUSE_RULES.md to the workspace `AGENTS.md` — the Codex
+    analogue of the Claude backend's system-prompt append. Kept out of worker
+    PRs exactly like the guard hook: `.git/info/exclude` when AGENTS.md is
+    untracked, `skip-worktree` when the target repo already tracks it. Idempotent
+    (a marker guards re-appends), and a no-op when no HOUSE_RULES.md exists."""
+    ws, home_root = Path(ws), Path(home_root)
+    rules = home_root / "HOUSE_RULES.md"
+    if not rules.exists():
+        return
+    target = ws / _AGENTS_REL
+    if target.exists() and _HOUSE_MARKER in target.read_text(errors="replace"):
+        return  # already installed this attempt/session
+    was_tracked = target.exists() and (ws / ".git").exists() and _git_tracked(ws, _AGENTS_REL)
+    block = f"\n\n{_HOUSE_MARKER}\n# Pool house rules\n\n{rules.read_text()}\n"
+    with target.open("a") as f:
+        f.write(block)
+
+    if (ws / ".git").exists():
+        _git_exclude(ws, [] if was_tracked else [_AGENTS_REL])
+        if was_tracked:
+            subprocess.run(["git", "-C", str(ws), "update-index", "--skip-worktree", _AGENTS_REL],
+                           check=False, capture_output=True)
+
+
 def _merge_bash_hook(settings: dict) -> None:
     """Add the guard to settings['hooks']['PreToolUse'] under the Bash matcher,
     preserving any hooks the target repo already declares. Idempotent."""

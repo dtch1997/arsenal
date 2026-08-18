@@ -45,7 +45,7 @@ def children(home, tid: str) -> list[dict]:
 def delegate_child(home, parent: dict, cfg: dict, *, title: str, spec: str,
                    gate: dict | None = None, budget_usd: float | None = None,
                    budget_minutes: float | None = None, model: str | None = None,
-                   base: str | None = None) -> dict:
+                   base: str | None = None, backend: str | None = None) -> dict:
     """Create one child task record in the parent's pool; returns the saved record.
 
     Enforces the two recursion rails at the only choke point workers have:
@@ -99,6 +99,9 @@ def delegate_child(home, parent: dict, cfg: dict, *, title: str, spec: str,
         depth=depth,
         # inherit-by-default: the parent chooses a cheaper leaf model explicitly
         model=model or parent.get("model"),
+        # inherit-by-default: a codex parent spawns codex leaves unless it names
+        # a backend; a claude parent can route a mechanical leaf to codex
+        backend=backend or parent.get("backend"),
     )
     home.spec_path(tid).write_text(spec)
     home.save(child)
