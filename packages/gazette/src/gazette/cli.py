@@ -3,11 +3,34 @@
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 
-from . import gh, notes as notes_mod, sweep as sweep_mod
+from pathlib import Path
+
+from . import editions, gh, notes as notes_mod, sweep as sweep_mod, synthesize
 from .config import load_config
+
+
+def _desk_digest() -> str | None:
+    """Fold the desk inbox into the morning edition; None if desk is absent
+    or errors (the notes cron must not depend on it)."""
+    import shutil
+
+    exe = shutil.which("desk") or (
+        str(Path.home() / ".local" / "bin" / "desk")
+        if (Path.home() / ".local" / "bin" / "desk").exists()
+        else None
+    )
+    if not exe:
+        return None
+    try:
+        proc = subprocess.run([exe, "digest"], capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    out = proc.stdout.strip()
+    return out if proc.returncode == 0 and out else None
 
 
 def _collect(cfg):
@@ -34,8 +57,12 @@ def cmd_notes(args) -> int:
     cfg = load_config()
     now = datetime.now(timezone.utc)
     open_prs, merged, warnings = _collect(cfg)
-    text = notes_mod.build_notes(cfg, now, open_prs, merged, warnings)
+    appearances = editions.load_appearances()
+    ed = notes_mod.compile_edition(cfg, now, open_prs, merged, appearances, warnings)
+    news = synthesize.synthesize(cfg, merged)
+    text = notes_mod.build_notes(cfg, ed, news=news, desk_text=_desk_digest())
     path = notes_mod.spool_notes(now, text)
+    editions.record_edition(now, ed.visible_refs)  # this run counts as a delivered edition
     print(text)
     if path:
         print(f"\n[spooled → {path}]", file=sys.stderr)
@@ -43,7 +70,7 @@ def cmd_notes(args) -> int:
         try:
             import flare
 
-            flare.send(notes_mod.digest(cfg, now, open_prs, merged), sev="info", source="gazette")
+            flare.send(notes_mod.flare_body(ed, news=news, spool_path=path), sev="info", source="gazette")
         except Exception as e:  # a notes cron must not crash on transport
             print(f"[flare failed: {e}]", file=sys.stderr)
     return 0
