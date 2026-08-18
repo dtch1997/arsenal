@@ -24,9 +24,14 @@ goes back to each tool's first commit.
 
 ```bash
 uv sync --all-packages          # one venv, every tool editable, every CLI
-uv run lobby status
+ops/link-clis.sh                # symlink agent-facing CLIs into ~/.local/bin
 uv run pytest packages/lobby/tests
 ```
+
+`ops/link-clis.sh` owns the `~/.local/bin` symlinks (PATH links are a build
+artifact): every CLI in its list resolves bare from any shell, always to the
+workspace venv. `--check` diffs live-vs-repo; after adding a CLI to a
+package, add it to the list, merge, re-run.
 
 Install a single tool anywhere (plain pip works):
 
