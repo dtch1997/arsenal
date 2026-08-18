@@ -2,14 +2,21 @@
 
 Claude Code invokes the configured statusLine command on every refresh and
 pipes a JSON payload on stdin (model, context_window, cost, session_name,
-session_id, workspace, ...). Whatever the command prints (one line, ANSI
-colors allowed) becomes the status line.
+session_id, workspace, ...). Every line the command prints renders as its
+own row in the status area (ANSI colors allowed on all lines).
 
-Structure: the line is a list of SEGMENTS, each a function
-``payload -> str | None``. A segment returning None is skipped. SEGMENTS
-are tinted by remaining-context color; ALERT_SEGMENTS render bold red at
-the end of the line regardless. To extend the status line, write a segment
-and add it to one of the two lists.
+Structure: LINES is a list of rows; each row is a list of segments, each a
+function ``payload -> str | None``. Segments returning None are skipped,
+and rows with no surviving segments are dropped entirely. Segments style
+themselves (embed their own ANSI codes), except the first row, which
+render() tints by remaining-context color. To extend the status line, add
+a segment to an existing row or add a new row.
+
+Current layout:
+
+    [Fable 5] Context: 93% [██████████████░] | $3.094      <- context tint
+    · what this session is about                           <- dim
+    ⚑ open PR; update memory stub                          <- bold red
 """
 
 from __future__ import annotations
@@ -26,8 +33,8 @@ DIM = "\033[2m"
 RESET = "\033[0m"
 
 BAR_WIDTH = 15
-TOPIC_MAX = 48
-FLAGS_MAX = 80
+TOPIC_MAX = 80
+FLAGS_MAX = 120
 
 Segment = Callable[[dict[str, Any]], "str | None"]
 
@@ -93,23 +100,24 @@ def flags_segment(payload: dict[str, Any]) -> "str | None":
     flags = _session_state(payload).get("flags") or []
     if not flags:
         return None
-    return f"⚑ {_truncate('; '.join(str(f) for f in flags), FLAGS_MAX)}"
+    return f"{BOLD}{RED}⚑ {_truncate('; '.join(str(f) for f in flags), FLAGS_MAX)}{RESET}"
 
 
-SEGMENTS: list[Segment] = [model_segment, context_segment, cost_segment, topic_segment]
-ALERT_SEGMENTS: list[Segment] = [flags_segment]
+LINES: list[list[Segment]] = [
+    [model_segment, context_segment, cost_segment],
+    [topic_segment],
+    [flags_segment],
+]
 
 
 def render(payload: dict[str, Any]) -> str:
-    color = _context_color(_remaining_pct(payload))
-    parts = [text for seg in SEGMENTS if (text := seg(payload)) is not None]
-    # Dim/reset codes inside a segment (e.g. the topic) end the tint; re-open
-    # it after each so surrounding segments stay context-colored.
-    joiner = f" {color}" if color else " "
-    line = joiner.join(parts)
-    if color:
-        line = f"{color}{line}{RESET}"
-    alerts = [text for seg in ALERT_SEGMENTS if (text := seg(payload)) is not None]
-    if alerts:
-        line += f" {BOLD}{RED}{' '.join(alerts)}{RESET}"
-    return line
+    rows: list[str] = []
+    for i, segments in enumerate(LINES):
+        parts = [text for seg in segments if (text := seg(payload)) is not None]
+        if not parts:
+            continue
+        row = " ".join(parts)
+        if i == 0 and (color := _context_color(_remaining_pct(payload))):
+            row = f"{color}{row}{RESET}"
+        rows.append(row)
+    return "\n".join(rows)
