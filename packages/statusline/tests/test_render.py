@@ -1,22 +1,34 @@
+import json
 import subprocess
 import sys
 
-from statusline.render import GREEN, RED, RESET, YELLOW, render
+import pytest
+
+from statusline.render import BOLD, DIM, GREEN, RED, RESET, YELLOW, render
 
 
-def payload(remaining=75.0, model="Opus", cost=0.1234):
+@pytest.fixture(autouse=True)
+def state_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv("STATUSLINE_STATE_DIR", str(tmp_path))
+    import statusline.session as session
+
+    monkeypatch.setattr(session, "STATE_DIR", tmp_path)
+    return tmp_path
+
+
+def payload(remaining=75.0, model="Opus", cost=0.1234, **extra):
     return {
         "model": {"display_name": model},
         "context_window": {"remaining_percentage": remaining},
         "cost": {"total_cost_usd": cost},
+        **extra,
     }
 
 
-def test_full_line_matches_legacy_bash_format():
+def test_base_line_content_and_tint():
     # 75% of a 15-wide bar → 11 filled cells (round(75*15/100) = 11)
-    assert render(payload()) == (
-        f"{GREEN}[Opus] Context: 75% [███████████░░░░] | $0.123{RESET}"
-    )
+    out = render(payload())
+    assert out == f"{GREEN}[Opus] {GREEN}Context: 75% [███████████░░░░] {GREEN}| $0.123{RESET}"
 
 
 def test_color_thresholds():
@@ -41,12 +53,67 @@ def test_missing_cost_defaults_to_zero():
     assert "| $0.000" in render(p)
 
 
-def test_cli_survives_garbage_stdin():
-    out = subprocess.run(
-        [sys.executable, "-m", "statusline.cli"],
-        input="not json",
+def test_session_name_shown_as_topic():
+    out = render(payload(session_name="Fix the flux capacitor"))
+    assert f"{DIM}· Fix the flux capacitor{RESET}" in out
+
+
+def test_long_topic_truncated():
+    out = render(payload(session_name="x" * 100))
+    assert "x" * 47 + "…" in out
+    assert "x" * 48 not in out
+
+
+def test_sidecar_topic_overrides_session_name(state_dir):
+    (state_dir / "sid1.json").write_text(json.dumps({"topic": "manual topic"}))
+    out = render(payload(session_id="sid1", session_name="auto name"))
+    assert "manual topic" in out
+    assert "auto name" not in out
+
+
+def test_flags_render_bold_red_at_end(state_dir):
+    (state_dir / "sid1.json").write_text(json.dumps({"flags": ["open PR", "push branch"]}))
+    out = render(payload(session_id="sid1"))
+    assert out.endswith(f"{BOLD}{RED}⚑ open PR; push branch{RESET}")
+
+
+def test_corrupt_sidecar_ignored(state_dir):
+    (state_dir / "sid1.json").write_text("not json")
+    out = render(payload(session_id="sid1", session_name="auto name"))
+    assert "auto name" in out
+
+
+def _cli(*argv, env_extra=None, stdin=""):
+    import os
+
+    env = {**os.environ, **(env_extra or {})}
+    return subprocess.run(
+        [sys.executable, "-m", "statusline.cli", *argv],
+        input=stdin,
         capture_output=True,
         text=True,
+        env=env,
     )
+
+
+def test_cli_survives_garbage_stdin():
+    out = _cli(stdin="not json")
     assert out.returncode == 0
     assert out.stdout == "[Claude] Context: --%"
+
+
+def test_cli_flag_note_unflag_roundtrip(state_dir):
+    env = {"STATUSLINE_STATE_DIR": str(state_dir), "CLAUDE_CODE_SESSION_ID": "sid9"}
+    assert _cli("flag", "open PR", "push branch", env_extra=env).returncode == 0
+    assert _cli("note", "my topic", env_extra=env).returncode == 0
+    state = json.loads((state_dir / "sid9.json").read_text())
+    assert state == {"flags": ["open PR", "push branch"], "topic": "my topic"}
+    assert _cli("unflag", "pr", env_extra=env).returncode == 0
+    state = json.loads((state_dir / "sid9.json").read_text())
+    assert state["flags"] == ["push branch"]
+
+
+def test_cli_no_session_id_errors():
+    env = {"CLAUDE_CODE_SESSION_ID": ""}
+    out = _cli("flag", "x", env_extra=env)
+    assert out.returncode != 0
