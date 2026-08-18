@@ -47,17 +47,25 @@ label for the emitter.
 
 ## Transport & config
 
-The Slack **incoming-webhook URL** is resolved from, in order:
+Two Slack transports; the webhook wins when both are configured:
 
-1. env `FLARE_WEBHOOK`
-2. `~/.config/flare/config.toml`:
+1. **Incoming webhook** — env `FLARE_WEBHOOK`, else config `webhook_url`.
+2. **Bot token** (a Slack app posting via `chat.postMessage`, e.g. an
+   existing workspace bot) — env `FLARE_SLACK_TOKEN` + `FLARE_SLACK_CHANNEL`
+   (channel id), else config `bot_token` + `channel`. Both halves required.
+   A `{"ok": false}` API response counts as a failed send (spooled, not
+   silently dropped).
 
-   ```toml
-   [slack]
-   webhook_url = "https://hooks.slack.com/services/…"
-   ```
+`~/.config/flare/config.toml`:
 
-If neither is set, flare still spools the record locally, prints
+```toml
+[slack]
+webhook_url = "https://hooks.slack.com/services/…"   # transport 1
+bot_token   = "xoxb-…"                               # transport 2
+channel     = "C0123456789"
+```
+
+If nothing is configured, flare still spools the record locally, prints
 `no webhook configured; spooled only`, and exits 0.
 
 The Slack message is a `[{sev}] {msg}` headline plus a context line

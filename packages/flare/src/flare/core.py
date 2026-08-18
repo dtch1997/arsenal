@@ -39,20 +39,38 @@ def config_path() -> Path:
     return Path(override) if override else _home() / ".config" / "flare" / "config.toml"
 
 
+def _config_slack() -> dict:
+    path = config_path()
+    if not path.exists():
+        return {}
+    try:
+        data = tomllib.loads(path.read_text())
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+    slack = data.get("slack")
+    return slack if isinstance(slack, dict) else {}
+
+
+def _clean(value) -> str | None:
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
 def webhook_url() -> str | None:
     """Resolve the Slack incoming-webhook URL: env first, then config.toml."""
-    env = os.environ.get("FLARE_WEBHOOK")
-    if env:
-        return env
-    path = config_path()
-    if path.exists():
-        try:
-            data = tomllib.loads(path.read_text())
-        except (OSError, tomllib.TOMLDecodeError):
-            return None
-        url = (data.get("slack") or {}).get("webhook_url")
-        if isinstance(url, str) and url.strip():
-            return url.strip()
+    return _clean(os.environ.get("FLARE_WEBHOOK")) or _clean(
+        _config_slack().get("webhook_url"))
+
+
+def bot_credentials() -> tuple[str, str] | None:
+    """Resolve the Slack bot-token transport (a Slack app posting via
+    ``chat.postMessage``, e.g. the jarvis-mailroom app): ``(token, channel)``
+    from env ``FLARE_SLACK_TOKEN`` + ``FLARE_SLACK_CHANNEL``, then config.toml
+    ``[slack] bot_token`` + ``channel``. Both halves must be present."""
+    slack = _config_slack()
+    token = _clean(os.environ.get("FLARE_SLACK_TOKEN")) or _clean(slack.get("bot_token"))
+    channel = _clean(os.environ.get("FLARE_SLACK_CHANNEL")) or _clean(slack.get("channel"))
+    if token and channel:
+        return token, channel
     return None
 
 
@@ -146,6 +164,23 @@ def _post_slack(url: str, text: str) -> None:
         resp.read()
 
 
+def _post_slack_bot(token: str, channel: str, text: str) -> None:
+    # Slack's Web API returns HTTP 200 with {"ok": false} on failure — treating
+    # that as success would silently drop pages, so check the body.
+    body = json.dumps({"channel": channel, "text": text}).encode()
+    req = urllib.request.Request(
+        "https://slack.com/api/chat.postMessage",
+        data=body,
+        headers={"Content-Type": "application/json",
+                 "Authorization": f"Bearer {token}"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        payload = json.loads(resp.read().decode() or "{}")
+    if not payload.get("ok"):
+        raise RuntimeError(f"chat.postMessage: {payload.get('error', 'unknown error')}")
+
+
 def send(
     msg: str,
     sev: str = "info",
@@ -167,7 +202,8 @@ def send(
     record["suppressed"] = False
 
     url = webhook_url()
-    if url is None:
+    bot = None if url else bot_credentials()
+    if url is None and bot is None:
         _append_log(record)
         print("no webhook configured; spooled only")
         return record
@@ -178,10 +214,13 @@ def send(
         return record
 
     try:
-        _post_slack(url, format_slack(record))
+        if url is not None:
+            _post_slack(url, format_slack(record))
+        else:
+            _post_slack_bot(bot[0], bot[1], format_slack(record))
         record["sent"] = True
     except Exception as e:  # transport must never crash the caller
-        print(f"flare: webhook post failed ({e}); spooled only", file=sys.stderr)
+        print(f"flare: slack post failed ({e}); spooled only", file=sys.stderr)
 
     _append_log(record)
     return record
