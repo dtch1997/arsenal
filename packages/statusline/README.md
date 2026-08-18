@@ -6,10 +6,13 @@ context_window, cost, workspace, ...) on stdin; whatever the command prints
 becomes the status line. This package is that command:
 
 ```
-[Opus] Context: 75% [███████████░░░░] | $0.123 · repro logit-interp headline ⚑ open PR; push branch
+[Opus] Context: 75% [███████████░░░░] | $0.123
+· repro logit-interp headline
+⚑ open PR; push branch
 ```
 
-colored green/yellow/red by remaining context (>60% / >30% / below), plus:
+Row 1 (vitals) is colored green/yellow/red by remaining context
+(>60% / >30% / below); the other rows appear only when they have content:
 
 - **topic** (dim) — what the session is about: the harness's auto-generated
   `session_name`, overridable with `claude-statusline note "..."`.
@@ -56,9 +59,11 @@ into that venv.)
 ## Extending
 
 The line is a list of segment functions in `render.py` — each takes the
-stdin payload dict and returns a string (or `None` to be skipped). Add a
-function, append it to `SEGMENTS` (context-tinted) or `ALERT_SEGMENTS`
-(bold red, end of line), done. See the payload's full schema in
+stdin payload dict and returns a string (or `None` to be skipped),
+arranged into rows by the `LINES` list — every row renders as its own
+status-line row, empty rows are dropped, and segments style themselves
+(row 1 additionally gets the context tint). Add a segment to a row, or a
+new row, done. See the payload's full schema in
 the Claude Code docs (statusline JSON input) or by dumping stdin to a file
 from a scratch segment.
 

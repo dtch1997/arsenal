@@ -28,7 +28,7 @@ def payload(remaining=75.0, model="Opus", cost=0.1234, **extra):
 def test_base_line_content_and_tint():
     # 75% of a 15-wide bar → 11 filled cells (round(75*15/100) = 11)
     out = render(payload())
-    assert out == f"{GREEN}[Opus] {GREEN}Context: 75% [███████████░░░░] {GREEN}| $0.123{RESET}"
+    assert out == f"{GREEN}[Opus] Context: 75% [███████████░░░░] | $0.123{RESET}"
 
 
 def test_color_thresholds():
@@ -53,15 +53,15 @@ def test_missing_cost_defaults_to_zero():
     assert "| $0.000" in render(p)
 
 
-def test_session_name_shown_as_topic():
+def test_session_name_shown_as_topic_on_own_line():
     out = render(payload(session_name="Fix the flux capacitor"))
-    assert f"{DIM}· Fix the flux capacitor{RESET}" in out
+    assert out.splitlines()[1] == f"{DIM}· Fix the flux capacitor{RESET}"
 
 
 def test_long_topic_truncated():
     out = render(payload(session_name="x" * 100))
-    assert "x" * 47 + "…" in out
-    assert "x" * 48 not in out
+    assert "x" * 79 + "…" in out
+    assert "x" * 80 not in out
 
 
 def test_sidecar_topic_overrides_session_name(state_dir):
@@ -71,10 +71,18 @@ def test_sidecar_topic_overrides_session_name(state_dir):
     assert "auto name" not in out
 
 
-def test_flags_render_bold_red_at_end(state_dir):
+def test_flags_render_bold_red_on_last_line(state_dir):
     (state_dir / "sid1.json").write_text(json.dumps({"flags": ["open PR", "push branch"]}))
-    out = render(payload(session_id="sid1"))
-    assert out.endswith(f"{BOLD}{RED}⚑ open PR; push branch{RESET}")
+    out = render(payload(session_id="sid1", session_name="topic"))
+    assert out.splitlines()[-1] == f"{BOLD}{RED}⚑ open PR; push branch{RESET}"
+
+
+def test_empty_rows_dropped(state_dir):
+    # no topic, no flags -> single line
+    assert len(render(payload()).splitlines()) == 1
+    # flags but no topic -> flags line directly after vitals
+    (state_dir / "sid2.json").write_text(json.dumps({"flags": ["x"]}))
+    assert len(render(payload(session_id="sid2")).splitlines()) == 2
 
 
 def test_corrupt_sidecar_ignored(state_dir):
