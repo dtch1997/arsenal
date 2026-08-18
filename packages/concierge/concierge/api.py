@@ -64,7 +64,8 @@ class Pool:
     """A handle on one CONCIERGE_HOME. Config kwargs override config.yaml:
     concurrency, daily_usd_cap, interval, permission_mode, claude_bin,
     claude_extra_args, slack_webhook, pool_cmd, env_file, wait_poll_seconds,
-    wait_timeout_minutes.
+    wait_timeout_minutes, and the Codex backend keys codex_bin (default
+    "codex"), codex_model (default "gpt-5.6-sol"), codex_cost_per_mtoken.
 
     env_file pre-seeds every worker's environment from a dotenv file (default:
     ~/.env if it exists; set to null to disable). Values override inherited
@@ -87,7 +88,7 @@ class Pool:
     def submit(self, spec, *, title=None, repo=None, base="main", branch=None,
                access="readwrite", gate=None, output=None, budget_usd=20.0,
                budget_minutes=240.0, priority=0, max_attempts=3, notify=None,
-               model=None, after=None) -> str:
+               model=None, after=None, backend=None) -> str:
         """Enqueue a task; returns its id. `spec` is Markdown text, or a Path
         (or existing *.md path string) to read it from. `gate` is a Gate
         object (concierge.gates), default Always(). `output` declares the
@@ -101,7 +102,11 @@ class Pool:
         dependency ends not-done (`failed`/`cancelled`) the held task fails
         fast — it never waits forever. Every id in `after` must already exist
         (raises ValueError otherwise); since a dep must predate its dependent,
-        cycles are impossible by construction."""
+        cycles are impossible by construction.
+
+        `backend` selects the worker backend: "claude" (default, absent = claude
+        — fully backward compatible) drives a Claude Agent SDK session; "codex"
+        drives `codex exec` with GPT 5.6 Sol as a cheap line worker."""
         tid = new_id()
         after = self._validate_after(after)
         task = new_task(
@@ -117,6 +122,7 @@ class Pool:
             output_schema=_normalize_schema(output),
             model=model,
             after=after,
+            backend=backend,
         )
         self.home.spec_path(tid).write_text(_spec_text(spec))
         self.home.save(task)

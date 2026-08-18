@@ -52,6 +52,7 @@ The unit of request. One JSON record + one Markdown spec per task.
   "output": null,                         // structured output, stamped on done
   "result_text": null,                    // the session's final text, stamped on done
   "after": [],                            // dep tids (issue #54); held until all done
+  "backend": "claude",                    // "claude" (default/absent) | "codex" (issue #60)
   "priority": 0,                          // higher = sooner; FIFO within priority
   "status": "queued",                     // see state machine (held | queued | …)
   "attempts": [                           // one entry per session (spawn or resume)
@@ -126,6 +127,26 @@ on restart, runs the gate, and settles (verified e2e: dispatch by daemon
 reconciler's wall/reap checks are backstops, not the enforcement. One
 subtlety: a dead worker stays a zombie of its spawning daemon until reaped,
 so `alive` treats zombies as dead.
+
+**Pluggable backends (issue #60).** A task's `backend` field
+(`"claude"` default/absent, or `"codex"`) selects which agent CLI its worker
+drives. The coupling surface is tiny: everything but the wrapper interacts with a
+worker through only the OS process table and `agent.jsonl`, so a backend is a
+wrapper module `concierge/backends/<name>.py` runnable as `python -m
+<module> <id> <attempt> [--resume <session>]`, normalizing its CLI's events into
+the frozen `agent.jsonl` schema (`system`/`assistant`/`result`); the init event
+gains a `backend` field for observability. `runtime.Worker.spawn` picks the
+module by backend. `claude` runs the Agent SDK session (extracted verbatim into
+`backends/claude.py`); `codex` drives `codex exec --json` (`backends/codex.py`),
+with signal_blocked/signal_waiting exposed through a stdio MCP server
+(`concierge.mcp_stdio`, sharing `concierge.signals` with the Claude in-process
+tools) registered via per-invocation `-c mcp_servers.*` overrides, house rules
+appended to the workspace `AGENTS.md`, `access` mapped to `--sandbox`, structured
+output via `--output-schema`, and cost **estimated** from token usage priced by
+`codex_cost_per_mtoken` (Codex reports tokens, not USD). v1 gaps, documented in
+the README capability table: codex workers are **leaves only** (no delegate) and
+run **unguarded** (no background-task hook equivalent). Config keys: `codex_bin`,
+`codex_model`, `codex_cost_per_mtoken`.
 
 **Why not flightdeck as the runtime** (considered, rejected):
 `AgentRun.go()` is a *blocking* call that owns lifecycle policy — gates,

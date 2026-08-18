@@ -29,6 +29,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import backends
 from .records import now_iso
 
 PKG_PARENT = str(Path(__file__).resolve().parent.parent)
@@ -129,7 +130,10 @@ class Worker:
         schema = output_schema if output_schema is not None else task.get("output_schema")
         if schema:
             (log_dir / "output_schema.json").write_text(json.dumps(schema))
-        cmd = [sys.executable, "-m", "concierge.worker", task["id"], str(n)]
+        # pick the wrapper module by backend (issue #60); absent/None -> claude,
+        # so legacy records with no `backend` field dispatch unchanged
+        module = backends.module_for(task.get("backend"))
+        cmd = [sys.executable, "-m", module, task["id"], str(n)]
         if resume:
             cmd += ["--resume", resume]
         # merge order: inherited os.environ, then env-file values override it,

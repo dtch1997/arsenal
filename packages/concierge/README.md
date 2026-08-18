@@ -155,6 +155,44 @@ python -m concierge serve          # or: await pool.serve() inside your own loop
 is the Python API:
 `submit / wait / wait_all / msg / tasks / get / transcript / cancel / remove`.
 
+### Worker backends (`claude` | `codex`)
+
+Each task names a **backend** — the agent CLI its worker drives. `pool.submit(...,
+backend="codex")` (or `backend=` on the `delegate` tool) selects it; **absent or
+`"claude"` is the default**, so every existing record and caller is unchanged.
+The daemon is backend-agnostic: it observes only the OS process table and the
+frozen `agent.jsonl` event stream, so a backend is just a wrapper module
+(`concierge/backends/<name>.py`) that drives a CLI and normalizes its events
+into that schema. `runtime.Worker.spawn` picks the module by `task["backend"]`.
+
+- **`claude`** (default) — a Claude Agent SDK session (`concierge.backends.claude`,
+  extracted verbatim from the original worker; `concierge.worker` still re-exports
+  it). Config: `claude_bin`, `claude_extra_args`, `permission_mode`.
+- **`codex`** — `codex exec --json` with GPT 5.6 Sol (`concierge.backends.codex`),
+  aimed at cheap, mechanical **line workers** so the pool keeps running when the
+  Anthropic limit is exhausted. Config: `codex_bin` (default `codex`),
+  `codex_model` (default `gpt-5.6-sol`), `codex_cost_per_mtoken`.
+
+**Capability / gap map** (what the codex backend replicates, and where it differs):
+
+| Capability | Claude | Codex |
+|---|---|---|
+| Headless run in workspace | SDK `query()` with `cwd` | `codex exec --json -C <ws>` |
+| Session resume | `resume=session_id` | `codex exec <flags> resume <thread_id>` (exec flags **before** `resume`) |
+| Structured output | `output_format` → `structured_output` | `--output-schema`; final `agent_message` parsed as JSON |
+| signal_blocked / signal_waiting | in-process SDK MCP tools | stdio MCP server `python -m concierge.mcp_stdio` (same `concierge.signals` logic) |
+| House rules | system-prompt append | appended to workspace `AGENTS.md`, kept out of PRs (`.git/info/exclude` + skip-worktree) |
+| Access `readonly`/`readwrite` | tool allowlist / `bypassPermissions` | `--sandbox read-only` / `--sandbox workspace-write` |
+| delegate (trees & leaves) | in-process tool | **gap (v1):** codex workers are **leaves only** — no delegate tool |
+| Budget | real USD from result events | **gap:** codex reports tokens, not USD — cost is an **estimate** from `turn.completed` usage priced via `codex_cost_per_mtoken`, stamped into the attempt; wall-clock bounds it as before |
+| Background-task guard hook | `.claude/` PreToolUse hook | **gap:** no hook equivalent — codex workers run unguarded; the no-detach rule is carried prominently in the `AGENTS.md` house rules instead |
+
+The concierge MCP server is registered **per-invocation** via `codex exec -c
+mcp_servers.concierge.*` overrides (not the user's `~/.codex/config.toml`), so
+the default `CODEX_HOME` — and the ChatGPT-plan auth in `~/.codex/auth.json` —
+stays in effect. The server writes into the same mailbox / wait-sidecar files as
+the Claude in-process tools.
+
 ## Status
 
 Prototype (v0.2). Workers run on `AgentSdkRuntime`: each task gets a

@@ -3,7 +3,7 @@ name = "concierge"
 version = "0.1.0"
 description = "Worker pool over headless Claude sessions (see SPEC.md)"
 requires-python = ">=3.10"
-dependencies = ["claude-agent-sdk>=0.2", "pyyaml>=6"]
+dependencies = ["claude-agent-sdk>=0.2", "pyyaml>=6", "mcp>=1"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
