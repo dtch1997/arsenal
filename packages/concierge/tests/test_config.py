@@ -32,3 +32,22 @@ def test_unparseable_config_raises(tmp_path):
     (home.root / "config.yaml").write_text("concurrency: [unclosed\n")
     with pytest.raises(Exception):
         load_config(home)
+
+
+def test_default_backend_resolved_at_submit(tmp_path):
+    # submit stamps the pool's default_backend onto the record; explicit
+    # backend= wins; no config -> claude (records-level default)
+    from concierge import Pool
+
+    home = _home(tmp_path)
+    (home.root / "config.yaml").write_text("default_backend: codex\n")
+    pool = Pool(home.root)
+    assert pool.get(pool.submit("x"))["backend"] == "codex"
+    assert pool.get(pool.submit("x", backend="claude"))["backend"] == "claude"
+    # kwarg overrides file config (Pool config precedence)
+    pool2 = Pool(home.root, default_backend="claude")
+    assert pool2.get(pool2.submit("x"))["backend"] == "claude"
+    # absent everywhere -> claude
+    home2 = _home(tmp_path / "h2")
+    pool3 = Pool(home2.root)
+    assert pool3.get(pool3.submit("x"))["backend"] == "claude"

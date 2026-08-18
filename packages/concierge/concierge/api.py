@@ -67,6 +67,11 @@ class Pool:
     wait_timeout_minutes, and the Codex backend keys codex_bin (default
     "codex"), codex_model (default "gpt-5.6-sol"), codex_cost_per_mtoken.
 
+    default_backend (default "claude") is the backend a submit gets when it
+    doesn't pass `backend=` explicitly. NB codex workers are leaves-only: a
+    task that must delegate needs an explicit backend="claude" when the
+    pool default is codex.
+
     env_file pre-seeds every worker's environment from a dotenv file (default:
     ~/.env if it exists; set to null to disable). Values override inherited
     os.environ; the concierge-set vars still win last.
@@ -104,11 +109,15 @@ class Pool:
         (raises ValueError otherwise); since a dep must predate its dependent,
         cycles are impossible by construction.
 
-        `backend` selects the worker backend: "claude" (default, absent = claude
-        — fully backward compatible) drives a Claude Agent SDK session; "codex"
-        drives `codex exec` with GPT 5.6 Sol as a cheap line worker."""
+        `backend` selects the worker backend: "claude" drives a Claude Agent
+        SDK session; "codex" drives `codex exec` with GPT 5.6 Sol as a cheap
+        line worker. Absent, the pool's `default_backend` config key decides
+        (itself defaulting to "claude" — fully backward compatible)."""
         tid = new_id()
         after = self._validate_after(after)
+        # resolve the pool default HERE so the record carries an explicit
+        # backend — dispatch must not depend on whatever config says later
+        backend = backend or self.config.get("default_backend")
         task = new_task(
             tid,
             title=title or (Path(spec).stem if isinstance(spec, Path) else f"task {tid}"),
