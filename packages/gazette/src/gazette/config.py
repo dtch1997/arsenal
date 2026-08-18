@@ -25,6 +25,8 @@ DEFAULTS = {
         "**/*credential*",
     ],
     "notes_window_hours": 24,
+    "delay_editions": 2,
+    "synthesis_cmd": "claude -p --model sonnet",
 }
 
 _TEMPLATE = """\
@@ -36,6 +38,8 @@ _TEMPLATE = """\
 # protected_globs = ["CLAUDE.md", "HOUSE_RULES.md", "ops/**", ".claude/**", "goals/README.md"]
 # blocked_globs = ["**/.env*", "**/*secret*", "**/*credential*"]
 # notes_window_hours = 24
+# delay_editions = 2          # delay lane merges after appearing in N morning editions
+# synthesis_cmd = "claude -p --model sonnet"   # "" disables the LLM news pass
 """
 
 
@@ -46,6 +50,8 @@ class Config:
     protected_globs: list[str] = field(default_factory=lambda: list(DEFAULTS["protected_globs"]))
     blocked_globs: list[str] = field(default_factory=lambda: list(DEFAULTS["blocked_globs"]))
     notes_window_hours: int = DEFAULTS["notes_window_hours"]
+    delay_editions: int = DEFAULTS["delay_editions"]
+    synthesis_cmd: str = DEFAULTS["synthesis_cmd"]
 
 
 def _home() -> Path:
@@ -82,4 +88,6 @@ def load_config() -> Config:
         protected_globs=list(merged["protected_globs"]),
         blocked_globs=list(merged["blocked_globs"]),
         notes_window_hours=int(merged["notes_window_hours"]),
+        delay_editions=int(merged["delay_editions"]),
+        synthesis_cmd=str(merged["synthesis_cmd"]),
     )

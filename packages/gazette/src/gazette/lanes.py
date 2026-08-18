@@ -104,8 +104,15 @@ class Decision:
     anomalies: list[str] = field(default_factory=list)
 
 
-def decide(pr: PR, cfg: Config, now: datetime) -> Decision:
-    """The sweep's whole policy, as one pure function over a normalized PR."""
+def decide(pr: PR, cfg: Config, now: datetime, appearances: int | None = None) -> Decision:
+    """The sweep's whole policy, as one pure function over a normalized PR.
+
+    ``appearances`` is how many distinct morning editions the PR has appeared
+    in (see editions.py). When provided, the delay-lane veto window is counted
+    in delivered editions — a skipped morning pauses the window — and the
+    wall-clock ``delay_hours`` is kept only as a stall detector. When None
+    (no edition data supplied), falls back to the wall-clock window.
+    """
     lane, reasons = resolve_lane(pr.labels, pr.files, cfg)
     anomalies = list(reasons)
     if pr.is_draft:
@@ -124,7 +131,24 @@ def decide(pr: PR, cfg: Config, now: datetime) -> Decision:
     if lane is Lane.AUTO:
         return Decision("merge", lane, "auto lane, checks green", anomalies)
     age_h = (now - pr.created_at).total_seconds() / 3600.0
-    if age_h >= cfg.delay_hours:
-        return Decision("merge", lane, f"veto window elapsed ({age_h:.0f}h)", anomalies)
-    remaining = cfg.delay_hours - age_h
-    return Decision("wait", lane, f"in veto window (~{remaining:.0f}h left)", anomalies)
+    if appearances is None:
+        if age_h >= cfg.delay_hours:
+            return Decision("merge", lane, f"veto window elapsed ({age_h:.0f}h)", anomalies)
+        remaining = cfg.delay_hours - age_h
+        return Decision("wait", lane, f"in veto window (~{remaining:.0f}h left)", anomalies)
+    if appearances >= cfg.delay_editions:
+        return Decision(
+            "merge", lane,
+            f"veto window elapsed (seen in {appearances}/{cfg.delay_editions} morning editions)",
+            anomalies,
+        )
+    if age_h >= 3 * cfg.delay_hours:
+        anomalies.append(
+            f"stalled: aged {age_h:.0f}h but seen in only {appearances}/"
+            f"{cfg.delay_editions} editions — is the notes cron running?"
+        )
+    return Decision(
+        "wait", lane,
+        f"in veto window (seen in {appearances}/{cfg.delay_editions} morning editions)",
+        anomalies,
+    )

@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 
 from . import gh
 from .config import Config, spool_dir
+from .editions import load_appearances
 from .lanes import PR, Decision, decide
 
 
@@ -29,11 +30,12 @@ def run(cfg: Config, now: datetime | None = None, dry_run: bool = False) -> dict
     """Returns a report: {merged, waiting, skipped, errors, warnings}."""
     now = now or datetime.now(timezone.utc)
     report: dict = {"merged": [], "waiting": [], "skipped": [], "errors": [], "warnings": []}
+    appearances = load_appearances()  # delay windows count delivered editions
     for repo in cfg.github_repos:
         prs, warnings = gh.list_open_prs(repo)
         report["warnings"].extend(warnings)
         for pr in prs:
-            decision = decide(pr, cfg, now)
+            decision = decide(pr, cfg, now, appearances.get(pr.ref, 0))
             row = {
                 "ts": now.isoformat(),
                 "repo": repo,
