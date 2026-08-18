@@ -158,8 +158,13 @@ is the Python API:
 ### Worker backends (`claude` | `codex`)
 
 Each task names a **backend** — the agent CLI its worker drives. `pool.submit(...,
-backend="codex")` (or `backend=` on the `delegate` tool) selects it; **absent or
-`"claude"` is the default**, so every existing record and caller is unchanged.
+backend="codex")` (or `backend=` on the `delegate` tool) selects it; absent, the
+pool's **`default_backend`** config key decides, itself defaulting to `"claude"`,
+so every existing record and caller is unchanged. The default is resolved at
+submit time and stamped on the record — flipping config never re-routes
+already-submitted tasks. NB codex workers are leaves-only: when the pool
+default is codex, a task that must `delegate` needs an explicit
+`backend="claude"`.
 The daemon is backend-agnostic: it observes only the OS process table and the
 frozen `agent.jsonl` event stream, so a backend is just a wrapper module
 (`concierge/backends/<name>.py`) that drives a CLI and normalizes its events
