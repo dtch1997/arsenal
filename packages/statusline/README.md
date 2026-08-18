@@ -54,7 +54,12 @@ exec "$HOME/jarvis/repos/arsenal/.venv/bin/claude-statusline"
 ```
 
 (`uv sync --all-packages` at the arsenal root installs `claude-statusline`
-into that venv.)
+into that venv.) The CLI is also symlinked onto PATH so sessions can call
+it bare:
+
+```bash
+ln -sf ~/jarvis/repos/arsenal/.venv/bin/claude-statusline ~/.local/bin/claude-statusline
+```
 
 ## Extending
 
