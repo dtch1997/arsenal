@@ -6,10 +6,24 @@ context_window, cost, workspace, ...) on stdin; whatever the command prints
 becomes the status line. This package is that command:
 
 ```
-[Opus] Context: 75% [███████████░░░░] | $0.123
+[Opus] Context: 75% [███████████░░░░] | $0.123 · repro logit-interp headline ⚑ open PR; push branch
 ```
 
-colored green/yellow/red by remaining context (>60% / >30% / below).
+colored green/yellow/red by remaining context (>60% / >30% / below), plus:
+
+- **topic** (dim) — what the session is about: the harness's auto-generated
+  `session_name`, overridable with `claude-statusline note "..."`.
+- **wrap-up flags** (bold red `⚑`) — things to do before ending the
+  session. From inside a session (keys on `$CLAUDE_CODE_SESSION_ID`):
+
+  ```bash
+  claude-statusline flag "open PR" "update memory stub"
+  claude-statusline unflag "open PR"    # substring match; or --all
+  claude-statusline show
+  ```
+
+  State lives in `~/.claude/statusline/sessions/<session_id>.json`
+  (pruned after 30 days).
 
 It replaces the original unversioned `~/.claude/statusline.sh` (a bash
 script that spawned python3 three times per refresh) with one stdlib-only
@@ -43,7 +57,8 @@ into that venv.)
 
 The line is a list of segment functions in `render.py` — each takes the
 stdin payload dict and returns a string (or `None` to be skipped). Add a
-function, append it to `SEGMENTS`, done. See the payload's full schema in
+function, append it to `SEGMENTS` (context-tinted) or `ALERT_SEGMENTS`
+(bold red, end of line), done. See the payload's full schema in
 the Claude Code docs (statusline JSON input) or by dumping stdin to a file
 from a scratch segment.
 
